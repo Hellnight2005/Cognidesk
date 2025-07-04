@@ -1,12 +1,12 @@
 const express = require("express");
 const passport = require("passport");
+const attachDeviceInfo = require("../middleware/attachDeviceInfo");
 const router = express.Router();
 
 // =======================
 // 🔹 Google OAuth Routes
 // =======================
 
-// 🟢 Start Google Login
 router.get(
   "/google",
   passport.authenticate("google", {
@@ -17,61 +17,102 @@ router.get(
       "https://www.googleapis.com/auth/calendar.events",
     ],
     accessType: "offline",
-    prompt: "consent", // ensures refreshToken is returned
+    prompt: "consent",
   })
 );
 
-// 🔁 Google OAuth Callback
 router.get(
   "/google/callback",
   passport.authenticate("google", {
     failureRedirect: "/auth/failure",
-    successRedirect: "/auth/success",
-  })
+  }),
+  attachDeviceInfo,
+  (req, res) => {
+    res.redirect("/auth/success");
+  }
 );
 
 // =======================
 // 🔹 GitHub OAuth Routes
 // =======================
 
-// 🟢 Start GitHub Login with `repo` scope
 router.get(
   "/github",
   passport.authenticate("github", {
-    scope: ["user:email", "repo"], // `repo` gives access to private repo and file manipulation
+    scope: ["user:email", "repo"],
   })
 );
 
-// 🔁 GitHub OAuth Callback
 router.get(
   "/github/callback",
   passport.authenticate("github", {
     failureRedirect: "/auth/failure",
-    successRedirect: "/auth/success",
-  })
+  }),
+  attachDeviceInfo,
+  (req, res) => {
+    res.redirect("/auth/success");
+  }
 );
 
 // =======================
 // 🔹 Shared Auth Routes
 // =======================
 
-// ✅ OAuth Success
 router.get("/success", (req, res) => {
-  if (!req.user) {
+  if (!req.user || !req.session.passport?.user) {
     return res.status(401).json({ message: "Not authenticated" });
   }
-  res.json({ message: "Login successful", user: req.user });
+
+  const sessionUser = req.session.passport.user;
+
+  // 🧁 Set cookies using cookie-parser
+  res.cookie(
+    "profile",
+    {
+      id: sessionUser.id,
+      username: sessionUser.username,
+      display_name: sessionUser.display_name,
+      photo: sessionUser.profile_photo_url,
+    },
+    {
+      httpOnly: false,
+      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: "Lax",
+    }
+  );
+
+  res.cookie("google", sessionUser.provider.google || {}, {
+    httpOnly: false,
+    maxAge: 24 * 60 * 60 * 1000,
+    sameSite: "Lax",
+  });
+
+  res.cookie("github", sessionUser.provider.github || {}, {
+    httpOnly: false,
+    maxAge: 24 * 60 * 60 * 1000,
+    sameSite: "Lax",
+  });
+
+  res.json({
+    message: "Login successful",
+    user: sessionUser,
+  });
 });
 
-// ❌ OAuth Failure
 router.get("/failure", (req, res) => {
   res.status(401).json({ message: "Login failed" });
 });
 
-// 🚪 Logout
-router.get("/logout", (req, res) => {
-  req.logout(() => {
-    res.redirect("/");
+router.get("/logout", (req, res, next) => {
+  req.logout((err) => {
+    if (err) return next(err);
+    req.session.destroy(() => {
+      res.clearCookie("connect.sid");
+      res.clearCookie("profile");
+      res.clearCookie("google");
+      res.clearCookie("github");
+      res.redirect("/");
+    });
   });
 });
 

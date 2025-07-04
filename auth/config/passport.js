@@ -27,49 +27,22 @@ function defaultGitHubProvider() {
   };
 }
 
-// 🔧 Common device handler
-async function attachDeviceInfo(req, user) {
-  const fingerprint = req.query.fingerprint;
-  if (!fingerprint) return;
-
-  const userAgent = req.headers["user-agent"] || "unknown";
-  const platform = req.headers["sec-ch-ua-platform"] || "unknown";
-
-  const deviceExists = user.devices?.some((d) => d.fingerprint === fingerprint);
-
-  if (!deviceExists) {
-    user.devices = user.devices || [];
-    user.devices.push({
-      fingerprint,
-      user_agent: userAgent,
-      platform,
-      last_used_at: new Date(),
-    });
-  } else {
-    user.devices = user.devices.map((d) =>
-      d.fingerprint === fingerprint ? { ...d, last_used_at: new Date() } : d
-    );
-  }
-
-  await user.save();
-}
-
-// ==================
+// ======================
 // 🔹 Google Strategy
-// ==================
+// ======================
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: process.env.GOOGLE_CALLBACK_URL,
-      passReqToCallback: true, // needed to access req.query
+      passReqToCallback: true,
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {
         const email = profile.emails[0].value;
         const googleId = profile.id;
-        const photo = profile.photos?.[0]?.value;
+        const photo = profile.photos?.[0]?.value || null;
         const tokenExpiresAt = new Date(Date.now() + 3600 * 1000);
 
         let user =
@@ -83,8 +56,7 @@ passport.use(
           google_id: googleId,
           email_verified: profile.emails[0].verified || false,
           picture: photo,
-          profile_link:
-            profile._json?.profile || `https://profiles.google.com/${googleId}`,
+          profile_link: `https://profiles.google.com/${googleId}`,
           access_token: accessToken,
           refresh_token: refreshToken,
           token_expires_at: tokenExpiresAt,
@@ -121,18 +93,17 @@ passport.use(
         }
 
         await user.save();
-        await attachDeviceInfo(req, user);
-        done(null, user);
+        return done(null, user);
       } catch (err) {
-        done(err, null);
+        return done(err, null);
       }
     }
   )
 );
 
-// ==================
+// ======================
 // 🔹 GitHub Strategy
-// ==================
+// ======================
 passport.use(
   new GitHubStrategy(
     {
@@ -149,7 +120,7 @@ passport.use(
           profile.emails?.[0]?.value ||
           `${profile.username}@users.noreply.github.com`;
         const username = profile.username;
-        const avatar = profile.photos?.[0]?.value;
+        const avatar = profile.photos?.[0]?.value || null;
         const tokenExpiresAt = new Date(Date.now() + 3600 * 1000);
 
         let user =
@@ -199,25 +170,32 @@ passport.use(
         }
 
         await user.save();
-        await attachDeviceInfo(req, user);
-        done(null, user);
+        return done(null, user);
       } catch (err) {
-        done(err, null);
+        return done(err, null);
       }
     }
   )
 );
 
-// ========================
-// 🔹 Passport Session Logic
-// ========================
+// ============================
+// 🔐 Passport Session Logic
+// ============================
+
+// Custom session payload (for cookie use)
 passport.serializeUser((user, done) => {
-  done(null, user._id);
+  done(null, {
+    id: user._id,
+    username: user.profile.username,
+    display_name: user.profile.display_name,
+    profile_photo_url: user.profile.profile_photo_url,
+    provider: user.auth.providers,
+  });
 });
 
-passport.deserializeUser(async (id, done) => {
+passport.deserializeUser(async (sessionData, done) => {
   try {
-    const user = await User.findById(id);
+    const user = await User.findById(sessionData.id);
     done(null, user);
   } catch (err) {
     done(err, null);
