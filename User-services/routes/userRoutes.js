@@ -12,6 +12,5 @@ router.get("/:id/analytics", userController.getUserAnalytics);
 
 // 🔁 Token Revoke
 router.get("/:id/revoke/google", userController.refreshGoogleToken);
-router.get("/:id/revoke/github", userController.revokeGitHubToken);
 
 module.exports = router;

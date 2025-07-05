@@ -69,29 +69,3 @@ exports.refreshGoogleAccessToken = async (userId) => {
     throw new Error("Failed to refresh Google access token");
   }
 };
-
-// 🔁 Revoke GitHub Token
-exports.revokeGitHubToken = async (userId) => {
-  const user = await User.findById(userId);
-  const token = user?.auth?.providers?.github?.access_token;
-  if (!token) throw new Error("No GitHub token found");
-
-  // Revoke using GitHub API — requires Basic Auth
-  const result = await axios.delete(
-    `https://api.github.com/applications/${process.env.GITHUB_CLIENT_ID}/token`,
-    {
-      auth: {
-        username: process.env.GITHUB_CLIENT_ID,
-        password: process.env.GITHUB_CLIENT_SECRET,
-      },
-      data: { access_token: token },
-    }
-  );
-
-  // Optional: Clear token in DB
-  user.auth.providers.github.access_token = null;
-  user.auth.providers.github.token_expires_at = null;
-  await user.save();
-
-  return result.data || { status: "revoked" };
-};

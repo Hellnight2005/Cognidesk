@@ -47,12 +47,3 @@ exports.refreshGoogleToken = async (req, res, next) => {
     next(err);
   }
 };
-// 🔁 Revoke GitHub
-exports.revokeGitHubToken = async (req, res, next) => {
-  try {
-    const result = await userService.revokeGitHubToken(req.params.id);
-    res.json({ message: "GitHub token revoked", result });
-  } catch (err) {
-    next(err);
-  }
-};
