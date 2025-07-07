@@ -40,7 +40,8 @@ const uploadToDrive = async (req, res, next) => {
       files,
       accessToken,
       file_category,
-      ideaFolderId
+      ideaFolderId,
+      created_by_user_id
     );
 
     // Attach the Drive metadata to the body for saving

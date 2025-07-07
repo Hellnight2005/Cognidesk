@@ -3,7 +3,7 @@ const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
 const cookieParser = require("cookie-parser");
-
+const morgan = require("morgan"); // For logging requests
 const connectDB = require("./config/db");
 require("./config/passport"); // ⬅️ Load Google & GitHub strategies
 
@@ -15,6 +15,8 @@ const app = express();
 // 🔗 Connect to MongoDB
 // ===================
 connectDB();
+
+app.use(morgan("dev")); // Log HTTP requests
 
 // ===================
 // 🛠️ Middlewares

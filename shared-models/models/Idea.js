@@ -19,6 +19,14 @@ const FileSchema = new Schema(
   { _id: false }
 );
 
+const ReferenceSchema = new Schema(
+  {
+    label: { type: String, required: true }, // e.g., "YouTube", "GitHub", "Blog"
+    url: { type: String, required: true },
+  },
+  { _id: false }
+);
+
 const IdeaSchema = new Schema(
   {
     idea_title: { type: String, required: true },
@@ -35,7 +43,10 @@ const IdeaSchema = new Schema(
     priority_reason: { type: String, default: null },
     source: { type: String, default: null },
     tags: { type: [String], default: [] },
-
+    external_references: {
+      type: [ReferenceSchema],
+      default: [],
+    },
     attached_files: { type: [FileSchema], default: [] },
 
     exploration_count: { type: Number, default: 0 },
