@@ -10,6 +10,18 @@ const CodeRepoSchema = new Schema({
   top_languages: [String], // e.g., ["TypeScript", "JavaScript"]
   language_breakdown: Schema.Types.Mixed, // Raw GitHub language breakdown
   is_private: { type: Boolean, default: false },
+  collaborators: [
+    {
+      username: { type: String, required: true },
+      profile_url: { type: String },
+      avatar_url: { type: String },
+      role: {
+        type: String,
+        enum: ["admin", "write", "read"],
+        default: "read",
+      },
+    },
+  ],
   added_at: { type: Date, default: Date.now },
 });
 
@@ -64,4 +76,4 @@ const ActiveProjectSchema = new Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("ActiveProject", ActiveProjectSchema);
+module.exports = ActiveProjectSchema;

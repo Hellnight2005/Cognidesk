@@ -1,8 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const connectDB = require("./config/db");
-
-const userRoutes = require("./routes/userRoutes");
+const ideaRoutes = require("./routes/ideaRoutes");
 // const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
@@ -10,14 +9,11 @@ connectDB();
 
 app.use(express.json());
 
-// Routes
-app.use("/api/users", userRoutes);
-
-// Error handling
-// app.use(errorHandler);
-
+app.use("/api/ideas", ideaRoutes);
 // Health
-app.get("/", (req, res) => res.send({ status: "🟢 User Service running" }));
+app.get("/", (req, res) =>
+  res.send({ status: "🟢 Idea valut service running" })
+);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
