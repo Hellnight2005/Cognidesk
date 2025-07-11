@@ -1,58 +1,92 @@
-const ideaService = require("../services/ideaService");
+const fs = require("fs");
+const path = require("path");
+const mongoose = require("mongoose");
+const sharedModels = require("../../shared-models");
+const Idea =
+  mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
 
-exports.getAllIdeas = async (req, res, next) => {
+const sendToKafka = require("../Kafka/producer");
+
+// Ensure uploads folder exists
+const uploadDir = path.join(__dirname, "..", "public", "uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+exports.createIdea = async (req, res) => {
   try {
-    const ideas = await ideaService.fetchAllIdeas();
-    res.json(ideas);
-  } catch (err) {
-    next(err);
+    const {
+      idea_title,
+      idea_description,
+      category,
+      sub_category,
+      curiosity_level,
+      convert_to_project,
+      priority_reason,
+      source,
+      tags,
+      external_references,
+      created_by_user_id,
+    } = req.body;
+
+    // 1. Create idea metadata in MongoDB
+    const newIdea = await Idea.create({
+      idea_title,
+      idea_description,
+      category,
+      sub_category,
+      curiosity_level,
+      convert_to_project,
+      priority_reason,
+      source,
+      tags,
+      external_references,
+      created_by_user_id,
+
+      file_status: "pending",
+      embedding_status: "pending",
+    });
+
+    // 2. Save each file to disk
+    const savedFiles = [];
+    for (const file of req.files) {
+      const uniqueFilename = `${Date.now()}-${file.originalname}`;
+      const filePath = path.join(uploadDir, uniqueFilename);
+      fs.writeFileSync(filePath, file.buffer);
+
+      savedFiles.push({
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        path: filePath,
+      });
+    }
+
+    // 3. Send metadata to Kafka
+    const kafkaPayload = {
+      ideaId: newIdea._id,
+      userId: created_by_user_id,
+      files: savedFiles, // includes file path + mimetype + name
+    };
+
+    await sendToKafka("idea-file-process", kafkaPayload);
+
+    // 4. Respond to client
+    res.status(201).json({
+      message:
+        "Idea created successfully. Files saved and queued for processing.",
+      idea: newIdea,
+    });
+  } catch (error) {
+    console.error("❌ Error creating idea:", error);
+    res.status(500).json({ error: "Failed to create idea." });
   }
 };
 
-exports.getIdeaById = async (req, res, next) => {
-  try {
-    const idea = await ideaService.fetchIdeaById(req.params.id);
-    if (!idea) return res.status(404).json({ message: "Idea not found" });
-    res.json(idea);
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.createIdea = async (req, res, next) => {
-  try {
-    const idea = await ideaService.createIdea(req.body);
-    res.status(201).json(idea);
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.updateIdea = async (req, res, next) => {
-  try {
-    const idea = await ideaService.updateIdea(req.params.id, req.body);
-    if (!idea) return res.status(404).json({ message: "Idea not found" });
-    res.json(idea);
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.deleteIdea = async (req, res, next) => {
-  try {
-    const result = await ideaService.deleteIdea(req.params.id);
-    if (!result) return res.status(404).json({ message: "Idea not found" });
-    res.json({ message: "Idea deleted" });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.getIdeaSummary = async (req, res, next) => {
-  try {
-    const summary = await ideaService.getIdeaSummary(req.params.id);
-    res.json(summary);
-  } catch (err) {
-    next(err);
-  }
-};
+// exports.getIdeaSummary = async (req, res) => {
+//   try {
+//     const ideaId = req.params.id;
+//     // You can summarize content or return dummy response for now
+//     res.json({ message: `Summary for idea ${ideaId}` });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: "Failed to get summary." });
+//   }
+// };

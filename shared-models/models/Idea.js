@@ -69,6 +69,16 @@ const IdeaSchema = new Schema(
     usefulness_rating: { type: Number, min: 1, max: 5, default: null },
     risks_or_challenges: { type: String, default: null },
     notes_on_progress: { type: String, default: null },
+    file_status: {
+      type: String,
+      enum: ["pending", "uploaded", "failed"],
+      default: "pending",
+    },
+    embedding_status: {
+      type: String,
+      enum: ["pending", "completed", "failed"],
+      default: "pending",
+    },
 
     created_by_user_id: { type: String, required: true },
   },
