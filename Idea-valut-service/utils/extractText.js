@@ -1,86 +1,59 @@
 const path = require("path");
 const fs = require("fs");
 const mammoth = require("mammoth");
-const PDFParser = require("pdf2json");
-const { getAudioTranscript, getVideoTranscript } = require("./transcribe");
-const { scrapeWebsite } = require("./webScraper.js");
-const { extractYouTubeTranscript } = require("./youtubeUtils");
 
-// Check if file is over a certain size (in GB)
-function isLargeFile(filePath, maxGB = 1) {
-  const stats = fs.statSync(filePath);
-  const sizeInGB = stats.size / 1024 ** 3;
-  return sizeInGB > maxGB;
+/**
+ * Save extracted text to /public/converted/{prefix_filename}.txt
+ */
+function saveToTextFile(baseName, text) {
+  const outputDir = path.join(__dirname, "public", "converted");
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+  const safeName = baseName.replace(/\W+/g, "_").toLowerCase();
+  const filePath = path.join(outputDir, `${safeName}.txt`);
+  fs.writeFileSync(filePath, text, "utf-8");
+  console.log(`✅ Saved: ${filePath}`);
 }
 
-// 📄 Efficient PDF extraction (stream-based)
-function extractLargePdfText(pdfPath) {
-  return new Promise((resolve, reject) => {
-    const pdfParser = new PDFParser();
-    pdfParser.on("pdfParser_dataError", (err) => reject(err.parserError));
-    pdfParser.on("pdfParser_dataReady", (pdfData) => {
-      const text = pdfData?.formImage?.Pages?.map((page) =>
-        page.Texts.map((t) =>
-          decodeURIComponent(t.R.map((r) => r.T).join(""))
-        ).join(" ")
-      ).join("\n\n");
+/**
+ * Extract text from a single file (.docx, .md, .txt)
+ */
+async function extractText(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const baseName = path.basename(filePath, ext);
 
-      resolve(text || "");
-    });
-
-    pdfParser.loadPDF(pdfPath);
-  });
-}
-
-// 📝 Word document (.docx) extraction
-async function extractDocText(docPath) {
-  const result = await mammoth.extractRawText({ path: docPath });
-  return result.value;
-}
-
-// 🌐 Universal entry point
-async function extractTextFromFile(filePathOrUrl) {
-  try {
-    // 🎥 YouTube
-    if (
-      typeof filePathOrUrl === "string" &&
-      filePathOrUrl.includes("youtube.com")
-    ) {
-      return await extractYouTubeTranscript(filePathOrUrl);
-    }
-
-    // 🌍 Website/blog
-    if (filePathOrUrl.startsWith("http")) {
-      return await scrapeWebsite(filePathOrUrl);
-    }
-
-    const ext = path.extname(filePathOrUrl).toLowerCase();
-
-    // PDF
-    if (ext === ".pdf") {
-      return await extractLargePdfText(filePathOrUrl);
-    }
-
-    // Word
-    if (ext === ".docx" || ext === ".doc") {
-      return await extractDocText(filePathOrUrl);
-    }
-
-    // Audio
-    if ([".mp3", ".wav", ".m4a"].includes(ext)) {
-      return await getAudioTranscript(filePathOrUrl);
-    }
-
-    // Video
-    if ([".mp4", ".mov", ".mkv"].includes(ext)) {
-      return await getVideoTranscript(filePathOrUrl);
-    }
-
-    return "";
-  } catch (err) {
-    console.error("❌ Error in extractTextFromFile:", err.message);
-    return "";
+  if (ext === ".docx") {
+    const result = await mammoth.extractRawText({ path: filePath });
+    saveToTextFile(`docx_${baseName}`, result.value || "");
+  } else if (ext === ".md" || ext === ".txt") {
+    const text = fs.readFileSync(filePath, "utf-8");
+    saveToTextFile(`text_${baseName}`, text);
+  } else {
+    console.log(`⏭️ Skipped unsupported file: ${filePath}`);
   }
 }
 
-module.exports = extractTextFromFile;
+/**
+ * Main function to extract all valid text files in a folder
+ * @param {string} inputDir - Path to the folder containing files
+ */
+async function extractTextFromFolder(inputDir) {
+  if (!fs.existsSync(inputDir)) {
+    console.error("❌ Input directory does not exist:", inputDir);
+    return;
+  }
+
+  const files = fs.readdirSync(inputDir);
+
+  for (const file of files) {
+    const fullPath = path.join(inputDir, file);
+    const stats = fs.statSync(fullPath);
+    if (stats.isFile()) {
+      await extractText(fullPath);
+    }
+  }
+}
+
+module.exports = {
+  extractTextFromFolder,
+};
