@@ -6,8 +6,13 @@ module.exports = function formatPrompt({ contextChunks = [], question }) {
   return [
     {
       role: "system",
-      content:
-        "You are a helpful assistant. Only answer using the context provided.",
+      content: `
+You are a helpful assistant. Answer strictly using the provided context.
+
+- If the user asks for a "brief" or "detailed" answer, follow that.
+- If the user does not specify, default to a short and concise answer.
+- Do not guess or use any external knowledge.
+      `.trim(),
     },
     {
       role: "user",
