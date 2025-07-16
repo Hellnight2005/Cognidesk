@@ -1,20 +1,48 @@
-// index.js
-const { getEmbedding } = require("./ollamaClient");
-const { createCollection, addIdea, searchIdeas } = require("./qdrantClient");
+const readline = require("readline");
+const generateQueryEmbedding = require("./embeddings/queryEmbed");
+const searchQdrant = require("./search/searchQdrant");
+const askOllama = require("./llm/queryOllama");
 
-async function main() {
-  await createCollection();
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
 
-  const ideaText = "Build an AI agent that helps organize meetings";
-  const ideaId = "6f9b3512-3ad9-11ee-be56-0242ac120002";
+console.log("💬 Ask a question (type 'exit' to quit):");
 
-  const embedding = await getEmbedding(ideaText);
-  await addIdea(ideaId, embedding, ideaText);
+rl.on("line", async (input) => {
+  if (input.toLowerCase() === "exit") {
+    rl.close();
+    return;
+  }
 
-  console.log("🔍 Searching for similar ideas...");
-  const results = await searchIdeas(embedding);
+  try {
+    // Step 1: Convert question into embedding
+    const queryEmbedding = await generateQueryEmbedding(input);
 
-  console.log("🔎 Top Matches:", results);
-}
+    // Step 2: Search vector DB (Qdrant) for similar vectors
+    const searchResults = await searchQdrant(queryEmbedding, 5); // top-k = 5
 
-main();
+    // Step 3: Extract original text from matched chunks
+    const contextChunks = searchResults
+      .map((match) => match.payload?.original_text)
+      .filter(Boolean)
+      .join("\n\n---\n\n");
+
+    if (!contextChunks.trim()) {
+      console.warn("⚠️ No relevant context found in vector DB.");
+    }
+
+    // Step 4: Send context + question to Ollama LLM
+    const answer = await askOllama({
+      question: input,
+      context: contextChunks,
+    });
+
+    console.log("\n🤖 Ollama:\n" + answer + "\n");
+  } catch (err) {
+    console.error("❌ Error:", err.message);
+  }
+
+  rl.prompt();
+});

@@ -3,7 +3,8 @@ const { Schema } = mongoose;
 
 const FileSchema = new Schema(
   {
-    file_name: { type: String, required: true },
+    originalname: { type: String, required: true },
+    file_name: { type: String, required: true }, // Saved name in public/converted
     file_category: {
       type: String,
       enum: ["Video", "Document", "Image", "Other"],
@@ -15,6 +16,11 @@ const FileSchema = new Schema(
     drive_file_link: { type: String, required: true },
     video_duration_minutes: { type: Number, default: null },
     uploaded_at: { type: Date, required: true },
+    embedding_status: {
+      type: String,
+      enum: ["pending", "completed", "failed"],
+      default: "pending",
+    },
   },
   { _id: false }
 );

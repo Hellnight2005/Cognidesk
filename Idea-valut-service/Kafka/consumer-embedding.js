@@ -1,21 +1,33 @@
 const fs = require("fs");
 const path = require("path");
 const { Kafka } = require("kafkajs");
-const extractTextFromFile = require("../utils/extractText.js");
+const mongoose = require("mongoose");
+
+const sharedModels = require("../../shared-models");
+const { extractTextFromFolder } = require("../utils/extractText");
+const { extractTextWithPdfParse } = require("../utils/extractPDF");
+const { getTranscriptFromRapidAPI } = require("../utils/youtubeUtils");
+const { scrapeWebsite } = require("../utils/webScraper");
+
 const generateEmbedding = require("../utils/embedding");
 const saveToQdrant = require("../utils/vectorDb");
 
-// Kafka setup
+const Idea =
+  mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
+
 const kafka = new Kafka({
   clientId: "embedder",
   brokers: ["localhost:9092"],
 });
 const consumer = kafka.consumer({ groupId: "embed-group" });
 
-// Make sure destination folder exists
 const EMBEDDING_DIR = path.resolve("public/embeddings");
+const CONVERTED_DIR = path.resolve("public/converted");
+
 if (!fs.existsSync(EMBEDDING_DIR))
   fs.mkdirSync(EMBEDDING_DIR, { recursive: true });
+if (!fs.existsSync(CONVERTED_DIR))
+  fs.mkdirSync(CONVERTED_DIR, { recursive: true });
 
 const startEmbeddingConsumer = async () => {
   await consumer.connect();
@@ -30,20 +42,60 @@ const startEmbeddingConsumer = async () => {
 
       for (const file of files) {
         try {
-          const localPath = file.path;
-          const filePath = path.resolve(localPath);
+          let text = "";
+          let filePath = "";
 
-          if (!fs.existsSync(filePath)) {
-            console.warn(`⚠️ File not found locally: ${filePath}, skipping.`);
+          // 🎥 YouTube link
+          if (file.youtube_link) {
+            console.log(`🎥 Getting transcript for: ${file.youtube_link}`);
+            text = await getTranscriptFromRapidAPI(file.youtube_link);
+          }
+
+          // 🌐 Blog or webpage
+          else if (file.website_url) {
+            console.log(`🌐 Scraping website: ${file.website_url}`);
+            text = await scrapeWebsite(file.website_url);
+          }
+
+          // 📄 Local file (PDF, DOCX, MD, TXT)
+          else {
+            filePath = path.resolve(file.path);
+
+            if (!fs.existsSync(filePath)) {
+              const fallbackPath = path.resolve(CONVERTED_DIR, file.file_name);
+              if (fs.existsSync(fallbackPath)) {
+                filePath = fallbackPath;
+                console.log(`🔁 Fallback: ${file.file_name}`);
+              } else {
+                console.warn(`❌ File not found: ${filePath}`);
+                continue;
+              }
+            }
+
+            const ext = path.extname(filePath).toLowerCase();
+
+            if (ext === ".pdf") {
+              text = await extractTextWithPdfParse(filePath);
+            } else if ([".docx", ".md", ".txt"].includes(ext)) {
+              text = await extractTextFromFolder(filePath);
+            } else {
+              console.warn(`⚠️ Unsupported file type: ${file.originalname}`);
+              continue;
+            }
+          }
+
+          if (!text) {
+            console.warn(`⚠️ No text extracted from ${file.originalname}`);
             continue;
           }
 
-          console.log(`📄 Extracting text from: ${file.originalname}`);
-          const text = await extractTextFromFile(filePath);
-          if (!text) continue;
-
           const embedding = await generateEmbedding(text);
-          if (!embedding) continue;
+          if (!embedding) {
+            console.warn(
+              `⚠️ Failed to generate embedding for ${file.originalname}`
+            );
+            continue;
+          }
 
           await saveToQdrant({
             idea_id,
@@ -54,20 +106,50 @@ const startEmbeddingConsumer = async () => {
               idea_id,
               user_id,
               file_name: file.file_name,
-              drive_link: file.drive_file_link,
+              original_name: file.originalname,
+              drive_link: file.drive_file_link || null,
             },
           });
 
-          console.log("✅ File embedded and saved to vector DB");
+          console.log(`✅ Embedded: ${file.originalname}`);
 
-          // Move file to permanent storage
-          const timestampedName = `${Date.now()}_${file.originalname}`;
-          const targetPath = path.join(EMBEDDING_DIR, timestampedName);
-          fs.renameSync(filePath, targetPath); // move to embedding folder
+          await Idea.updateOne(
+            { _id: idea_id, "attached_files.file_name": file.file_name },
+            { $set: { "attached_files.$.embedding_status": "completed" } }
+          );
+
+          // Move + delete only if it's a local file
+          if (filePath && fs.existsSync(filePath)) {
+            const isAlreadyConverted =
+              filePath.includes(CONVERTED_DIR) ||
+              filePath.includes(EMBEDDING_DIR);
+
+            // Rename to /embeddings if not already there
+            if (!isAlreadyConverted) {
+              const targetPath = path.join(EMBEDDING_DIR, file.file_name);
+              fs.renameSync(filePath, targetPath);
+              console.log(`📁 Moved to embeddings: ${targetPath}`);
+            }
+
+            // Delete uploaded version (from multer temp)
+            if (!filePath.includes(CONVERTED_DIR)) {
+              fs.unlinkSync(file.path); // remove original upload
+              console.log(`🗑️ Deleted uploaded file: ${file.path}`);
+            }
+          }
         } catch (err) {
-          console.error("❌ Embedding error:", err);
+          console.error("❌ Embedding error:", err.message);
+
+          await Idea.updateOne(
+            { _id: idea_id, "attached_files.file_name": file.file_name },
+            { $set: { "attached_files.$.embedding_status": "failed" } }
+          );
         }
       }
+
+      await Idea.findByIdAndUpdate(idea_id, {
+        embedding_status: "completed",
+      });
     },
   });
 };

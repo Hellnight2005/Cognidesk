@@ -1,4 +1,3 @@
-// consumers/driveUploader.js
 const fs = require("fs");
 const path = require("path");
 const mongoose = require("mongoose");
@@ -57,27 +56,39 @@ async function startDriveConsumer() {
           rootFolderId
         );
 
-        // Step 4: Prepare files from disk
+        // Step 4: Prepare files with renamed names and original name tracking
+        const timestamp = Date.now();
         const bufferFiles = files.map((file) => {
           const filePath = path.resolve(file.path);
           const buffer = fs.readFileSync(filePath);
+          const ext = path.extname(file.originalname);
+          const baseName = path.basename(file.originalname, ext);
+          const renamedName = `${timestamp}_${baseName}${ext}`;
+
           return {
             buffer,
-            originalname: file.originalname,
+            originalname: renamedName,
+            original_name: file.originalname, // Track original for MongoDB
             mimetype: file.mimetype,
           };
         });
 
         // Step 5: Upload to Google Drive
-        const uploadedFiles = await googleUploadFiles(
+        const rawUploads = await googleUploadFiles(
           bufferFiles,
           accessToken,
-          "Document", // Customize as needed
+          "Document",
           parentFolderId,
           userId
         );
 
-        // Step 6: Update MongoDB with uploaded file info
+        // Step 6: Add original_name to each uploaded file object
+        const uploadedFiles = rawUploads.map((uploaded, idx) => ({
+          ...uploaded,
+          original_name: bufferFiles[idx].original_name, // Keep original file name
+        }));
+
+        // Step 7: Update MongoDB
         await Idea.findByIdAndUpdate(ideaId, {
           $push: { attached_files: { $each: uploadedFiles } },
           $set: {
@@ -86,12 +97,11 @@ async function startDriveConsumer() {
           },
         });
 
-        // Step 7: Clean up local files
-        for (const file of files) {
-          const filePath = path.resolve(file.path);
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        }
-
+        // Step 8: Log file retention
+        console.log(
+          "🗂️ Local files retained:",
+          files.map((f) => f.path)
+        );
         console.log(
           `✅ Uploaded ${uploadedFiles.length} files for idea ${ideaId}`
         );
