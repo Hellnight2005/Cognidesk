@@ -90,7 +90,7 @@ async function saveToQdrant({
   }
 }
 
-async function searchFromQdrant(vector, limit = 20) {
+async function searchFromQdrant(vector, limit = 300) {
   try {
     const result = await client.search(COLLECTION_NAME, {
       vector,

@@ -78,7 +78,7 @@ async function saveToQdrant({
 /**
  * Search Qdrant for similar vectors
  */
-async function searchFromQdrant(vector, limit = 5) {
+async function searchFromQdrant(vector, limit = 2000) {
   if (!vector || !Array.isArray(vector)) {
     throw new Error("Invalid query vector");
   }

@@ -23,16 +23,6 @@ services:
     depends_on:
       - zookeeper
 
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    restart: unless-stopped
-    tty: true
-
   qdrant:
     image: qdrant/qdrant
     container_name: qdrant
@@ -43,5 +33,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama-data:
   qdrant-data:

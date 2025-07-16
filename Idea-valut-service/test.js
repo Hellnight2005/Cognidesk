@@ -16,7 +16,7 @@ const embedTextFileAndSave = require("./utils/embedding");
     await ensureCollection();
 
     // Step 2: Define path to file
-    const filePath = path.resolve("public/converted/pdf_sid.txt");
+    const filePath = path.resolve("public/converted/pdf_pdf1.txt");
 
     // Step 3: Start embedding and saving
     console.log("📦 Embedding and saving vector chunks...");

@@ -1,11 +1,5 @@
 const axios = require("axios");
 
-/**
- * Generate embedding for a user input (question or plain text).
- * @param {string} text - The text to embed.
- * @param {number} retries - Number of retry attempts.
- * @returns {Promise<number[] | null>} - The embedding vector or null.
- */
 async function generateTextEmbedding(text, retries = 3) {
   if (!text || text.trim().length < 5) {
     console.error("❌ Text too short to embed.");
@@ -27,7 +21,7 @@ async function generateTextEmbedding(text, retries = 3) {
         throw new Error(`Invalid vector length: ${vector?.length}`);
       }
 
-      console.log(`🔹 Text embedding generated: "${text.slice(0, 60)}..."`);
+      console.log(`🔹 Text embedding generated.`);
       return vector;
     } catch (err) {
       console.warn(

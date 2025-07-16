@@ -1,12 +1,13 @@
 const path = require("path");
 const fs = require("fs");
 const mammoth = require("mammoth");
+const pdfParse = require("pdf-parse");
 
 /**
  * Save extracted text to /public/converted/{prefix_filename}.txt
  */
 function saveToTextFile(baseName, text) {
-  const outputDir = path.join(__dirname, "public", "converted");
+  const outputDir = path.join(__dirname, "..", "public", "converted");
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   const safeName = baseName.replace(/\W+/g, "_").toLowerCase();
@@ -16,44 +17,57 @@ function saveToTextFile(baseName, text) {
 }
 
 /**
- * Extract text from a single file (.docx, .md, .txt)
+ * Extract text from a single file (.docx, .md, .txt, .pdf)
  */
 async function extractText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const baseName = path.basename(filePath, ext);
 
-  if (ext === ".docx") {
-    const result = await mammoth.extractRawText({ path: filePath });
-    saveToTextFile(`docx_${baseName}`, result.value || "");
-  } else if (ext === ".md" || ext === ".txt") {
-    const text = fs.readFileSync(filePath, "utf-8");
-    saveToTextFile(`text_${baseName}`, text);
-  } else {
-    console.log(`⏭️ Skipped unsupported file: ${filePath}`);
+  try {
+    if (ext === ".docx") {
+      const result = await mammoth.extractRawText({ path: filePath });
+      saveToTextFile(`docx_${baseName}`, result.value || "");
+    } else if (ext === ".md" || ext === ".txt") {
+      const text = fs.readFileSync(filePath, "utf-8");
+      saveToTextFile(`text_${baseName}`, text);
+    } else if (ext === ".pdf") {
+      const buffer = fs.readFileSync(filePath);
+      const result = await pdfParse(buffer);
+      saveToTextFile(`pdf_${baseName}`, result.text || "");
+    } else {
+      console.log(`⏭️ Skipped unsupported file: ${filePath}`);
+    }
+  } catch (err) {
+    console.error(`❌ Failed to extract ${filePath}:`, err.message);
   }
 }
 
 /**
- * Main function to extract all valid text files in a folder
- * @param {string} inputDir - Path to the folder containing files
+ * Accept either a file or a folder of files
  */
-async function extractTextFromFolder(inputDir) {
-  if (!fs.existsSync(inputDir)) {
-    console.error("❌ Input directory does not exist:", inputDir);
+async function extractTextFromPath(inputPath) {
+  if (!fs.existsSync(inputPath)) {
+    console.error("❌ Path does not exist:", inputPath);
     return;
   }
 
-  const files = fs.readdirSync(inputDir);
+  const stats = fs.statSync(inputPath);
 
-  for (const file of files) {
-    const fullPath = path.join(inputDir, file);
-    const stats = fs.statSync(fullPath);
-    if (stats.isFile()) {
-      await extractText(fullPath);
+  if (stats.isFile()) {
+    await extractText(inputPath);
+  } else if (stats.isDirectory()) {
+    const files = fs.readdirSync(inputPath);
+    for (const file of files) {
+      const fullPath = path.join(inputPath, file);
+      if (fs.statSync(fullPath).isFile()) {
+        await extractText(fullPath);
+      }
     }
+  } else {
+    console.error("❌ Input is neither file nor directory:", inputPath);
   }
 }
 
 module.exports = {
-  extractTextFromFolder,
+  extractTextFromPath,
 };

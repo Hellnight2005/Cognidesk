@@ -5,7 +5,6 @@ const { searchFromQdrant } = require("./utils/vectorDb");
 const formatPrompt = require("./utils/formatPrompt");
 const formatSummaryPrompt = require("./utils/formatSummaryPrompt");
 
-// Helper: Detect if it's a summary request
 function isSummaryRequest(question) {
   const lowered = question.toLowerCase();
   return (
@@ -16,7 +15,6 @@ function isSummaryRequest(question) {
   );
 }
 
-// Setup CLI input
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -35,8 +33,8 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
 
     if (isSummaryRequest(userQuestion)) {
       console.log("🧠 Detected summary request. Searching wide...");
-      const results = await searchFromQdrant(vector, 30);
-      const threshold = 0.75;
+      const results = await searchFromQdrant(vector, 20);
+      const threshold = 0.66;
 
       contextChunks = results
         .filter((r) => r.score >= threshold && r.payload.original_text)
@@ -45,7 +43,7 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
       console.log(`📚 Found ${contextChunks.length} chunks for summary.`);
     } else {
       console.log("🧠 Detected normal Q&A. Fetching top 5 chunks...");
-      const results = await searchFromQdrant(vector, 20);
+      const results = await searchFromQdrant(vector, 5);
 
       contextChunks = results
         .map((r) => r.payload.original_text)
@@ -54,27 +52,15 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
       console.log(`📚 Found ${contextChunks.length} chunks for Q&A.`);
     }
 
-    // Build prompt
     const fullPrompt = isSummaryRequest(userQuestion)
       ? formatSummaryPrompt(contextChunks)
       : formatPrompt({ contextChunks, question: userQuestion });
 
-    // Log prompt preview
-    console.log("📝 Prompt sent to LLM:\n");
-    if (Array.isArray(fullPrompt)) {
-      fullPrompt.forEach((m) =>
-        console.log(`[${m.role.toUpperCase()}]: ${m.content}\n`)
-      );
-    } else {
-      console.log(fullPrompt + "\n");
-    }
-
     console.log("🚀 Asking LLM via Ollama (streaming)...");
-
     const response = await axios.post(
       "http://localhost:11434/api/generate",
       {
-        model: "phi",
+        model: "tinyllama",
         prompt: Array.isArray(fullPrompt)
           ? fullPrompt.map((m) => m.content).join("\n\n")
           : fullPrompt,
@@ -83,12 +69,10 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
       { responseType: "stream" }
     );
 
-    // Streaming logic: print every 5 response chunks
     let buffer = "";
     let count = 0;
     response.data.on("data", (chunk) => {
       const lines = chunk.toString().split("\n").filter(Boolean);
-
       for (const line of lines) {
         try {
           const parsed = JSON.parse(line);
