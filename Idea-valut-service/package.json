@@ -27,6 +27,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.0.1",
     "ollama": "^0.5.16",
+    "p-queue": "^8.1.0",
     "pdf-parse": "^1.1.1",
     "pdf-poppler": "^0.2.1",
     "pdf2json": "^3.1.6",

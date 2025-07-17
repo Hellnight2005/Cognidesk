@@ -43,7 +43,7 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
       console.log(`📚 Found ${contextChunks.length} chunks for summary.`);
     } else {
       console.log("🧠 Detected normal Q&A. Fetching top 5 chunks...");
-      const results = await searchFromQdrant(vector, 5);
+      const results = await searchFromQdrant(vector, 500);
 
       contextChunks = results
         .map((r) => r.payload.original_text)
