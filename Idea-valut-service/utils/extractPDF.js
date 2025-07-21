@@ -21,7 +21,7 @@ async function extractTextWithPdfParse(pdfPath) {
   const baseName = path.basename(pdfPath, path.extname(pdfPath));
 
   if (text) {
-    saveToPublicFile(`pdf_${baseName}`, text);
+    saveToPublicFile(`${baseName}`, text);
     return { message: "✅ Text extracted successfully using pdf-parse." };
   } else {
     return { message: "❌ No extractable text found in PDF." };

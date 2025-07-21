@@ -17,7 +17,7 @@ const connectDB = async () => {
     // Start both Kafka consumers (each has its own group ID)
     try {
       await Promise.all([
-        startDriveConsumer(), // Group A - uploads to drive
+        // startDriveConsumer(), // Group A - uploads to drive
 
         startEmbeddingConsumer(), // Group B - embeds to vector DB
       ]);

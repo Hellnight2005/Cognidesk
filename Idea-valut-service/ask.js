@@ -27,6 +27,7 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
   try {
     console.log("🔎 Generating embedding for user question...");
     const vector = await generateTextEmbedding(userQuestion);
+    // console.log("✅ Embedding generated successfully!", vector);
     if (!vector) throw new Error("Failed to generate query embedding.");
 
     let contextChunks = [];
@@ -34,7 +35,7 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
     if (isSummaryRequest(userQuestion)) {
       console.log("🧠 Detected summary request. Searching wide...");
       const results = await searchFromQdrant(vector, 20);
-      const threshold = 0.66;
+      const threshold = 0.5;
 
       contextChunks = results
         .filter((r) => r.score >= threshold && r.payload.original_text)
@@ -43,11 +44,14 @@ rl.question("🤖 Ask your question: ", async (userQuestion) => {
       console.log(`📚 Found ${contextChunks.length} chunks for summary.`);
     } else {
       console.log("🧠 Detected normal Q&A. Fetching top 5 chunks...");
-      const results = await searchFromQdrant(vector, 500);
+      const results = await searchFromQdrant(vector, 5);
 
       contextChunks = results
-        .map((r) => r.payload.original_text)
-        .filter(Boolean);
+        .filter((r) => r.payload.original_text)
+        .map((r) => ({
+          text: r.payload.original_text,
+          file_name: r.payload.file_name || "unknown",
+        }));
 
       console.log(`📚 Found ${contextChunks.length} chunks for Q&A.`);
     }

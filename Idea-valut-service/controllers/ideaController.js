@@ -60,7 +60,7 @@ exports.createIdea = async (req, res) => {
     // 2️⃣ Store files on disk
     const savedFiles = [];
     for (const file of req.files || []) {
-      const uniqueFilename = `${Date.now()}-${file.originalname}`;
+      const uniqueFilename = `${file.originalname}`;
       const filePath = path.join(uploadDir, uniqueFilename);
       fs.writeFileSync(filePath, file.buffer);
 

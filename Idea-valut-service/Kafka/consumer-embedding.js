@@ -8,8 +8,7 @@ const { extractTextFromPath } = require("../utils/extractText");
 const { extractTextWithPdfParse } = require("../utils/extractPDF");
 const { getTranscriptFromRapidAPI } = require("../utils/youtubeUtils");
 const { scrapeWebsite } = require("../utils/webScraper");
-const generateEmbedding = require("../utils/embedding");
-const saveToQdrant = require("../utils/vectorDb");
+const { embedTextFileAndSave } = require("../utils/embedding");
 
 const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
@@ -24,6 +23,15 @@ if (!fs.existsSync(EMBEDDING_DIR))
   fs.mkdirSync(EMBEDDING_DIR, { recursive: true });
 if (!fs.existsSync(CONVERTED_DIR))
   fs.mkdirSync(CONVERTED_DIR, { recursive: true });
+
+// 🔧 Normalize file names (e.g. "UE_Brochure[1].pdf" → "ue_brochure_1_.txt")
+function normalizeFileName(fileName) {
+  return path
+    .basename(fileName, path.extname(fileName))
+    .toLowerCase()
+    .replace(/[\[\]\(\)\s]/g, "_")
+    .replace(/_+/g, "_");
+}
 
 const processFile = async (file, idea_id, user_id, retry = 0) => {
   try {
@@ -58,23 +66,17 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
 
     if (!text) throw new Error("No text extracted");
 
-    const embedding = await generateEmbedding(text);
-    if (!embedding) throw new Error("Embedding generation failed");
+    // 🔁 Embed based on normalized filename (to match converted .txt)
+    const normalizedBase = normalizeFileName(file.file_name);
+    const txtFileName = `${normalizedBase}.txt`;
+    const txtFilePath = path.join(CONVERTED_DIR, txtFileName);
 
-    await saveToQdrant({
-      idea_id,
-      user_id,
-      file_name: file.file_name,
-      vector: embedding,
-      metadata: {
-        idea_id,
-        user_id,
-        file_name: file.file_name,
-        original_name: file.originalname,
-        drive_link: file.drive_file_link || null,
-      },
-    });
+    if (!fs.existsSync(txtFilePath)) {
+      console.warn(`❌ File not found in converted dir: ${txtFileName}`);
+      throw new Error("Converted .txt file missing");
+    }
 
+    await embedTextFileAndSave(txtFilePath, user_id, idea_id);
     console.log(`✅ Embedded: ${file.originalname}`);
 
     await Idea.updateOne(
@@ -82,18 +84,10 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
       { $set: { "attached_files.$.embedding_status": "completed" } }
     );
 
-    if (filePath && fs.existsSync(filePath)) {
-      const isAlreadyConverted =
-        filePath.includes(CONVERTED_DIR) || filePath.includes(EMBEDDING_DIR);
-      if (!isAlreadyConverted) {
-        const targetPath = path.join(EMBEDDING_DIR, file.file_name);
-        fs.renameSync(filePath, targetPath);
-        console.log(`📁 Moved to embeddings: ${targetPath}`);
-      }
-      if (!filePath.includes(CONVERTED_DIR)) {
-        fs.unlinkSync(file.path);
-        console.log(`🗑️ Deleted uploaded file: ${file.path}`);
-      }
+    // 🗑️ Delete original uploaded file after embedding
+    if (file.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+      console.log(`🗑️ Deleted uploaded file: ${file.path}`);
     }
   } catch (err) {
     console.error(`❌ Error processing ${file.originalname}:`, err.message);
@@ -103,7 +97,7 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
       { $set: { "attached_files.$.embedding_status": "failed" } }
     );
 
-    if (retry < 3) {
+    if (retry < 2) {
       console.log(`🔁 Retrying ${file.originalname} (${retry + 1}/3)`);
       await processFile(file, idea_id, user_id, retry + 1);
     } else {
@@ -149,19 +143,12 @@ const processExternalReferences = async (
 
   for (const item of externalTextResults) {
     try {
-      const embedding = await generateEmbedding(item.text);
-      await saveToQdrant({
-        idea_id,
-        user_id,
-        file_name: item.originalname,
-        vector: embedding,
-        metadata: {
-          idea_id,
-          user_id,
-          source_type: item.sourceType,
-          original_name: item.originalname,
-        },
-      });
+      const normalizedFileName = normalizeFileName(item.originalname) + ".txt";
+      const fakePath = path.join(CONVERTED_DIR, normalizedFileName);
+
+      fs.writeFileSync(fakePath, item.text);
+      await embedTextFileAndSave(fakePath, user_id, idea_id);
+
       console.log(`✅ Embedded external: ${item.originalname}`);
     } catch (err) {
       console.error(
