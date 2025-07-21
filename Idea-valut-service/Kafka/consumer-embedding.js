@@ -8,7 +8,7 @@ const { extractTextFromPath } = require("../utils/extractText");
 const { extractTextWithPdfParse } = require("../utils/extractPDF");
 const { getTranscriptFromRapidAPI } = require("../utils/youtubeUtils");
 const { scrapeWebsite } = require("../utils/webScraper");
-const { embedTextFileAndSave } = require("../utils/embedding");
+const embedTextFileAndSave = require("../utils/embedding");
 
 const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
@@ -85,9 +85,27 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
     );
 
     // 🗑️ Delete original uploaded file after embedding
+    // 🗑️ Delete original uploaded file after embedding
     if (file.path && fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
       console.log(`🗑️ Deleted uploaded file: ${file.path}`);
+
+      // Also delete converted .txt
+      const convertedPath = path.join(
+        CONVERTED_DIR,
+        normalizeFileName(file.file_name) + ".txt"
+      );
+      if (fs.existsSync(convertedPath)) {
+        fs.unlinkSync(convertedPath);
+        console.log(`🗑️ Deleted converted file: ${convertedPath}`);
+      }
+
+      // Also delete embedded file
+      const embeddedPath = path.join(EMBEDDING_DIR, file.file_name);
+      if (fs.existsSync(embeddedPath)) {
+        fs.unlinkSync(embeddedPath);
+        console.log(`🗑️ Deleted embedded file: ${embeddedPath}`);
+      }
     }
   } catch (err) {
     console.error(`❌ Error processing ${file.originalname}:`, err.message);

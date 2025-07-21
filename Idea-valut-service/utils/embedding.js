@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const cliProgress = require("cli-progress");
-const { saveToQdrant } = require("./vectorDb");
+const { ensureCollection, saveToQdrant } = require("./vectorDb");
 
 const CONVERTED_DIR = path.resolve("public/converted");
 const EMBEDDING_DIR = path.resolve("public/embeddings");
@@ -104,32 +104,51 @@ async function generateEmbedding(text, retries = 3) {
  */
 async function embedTextFileAndSave(fullFilePath) {
   const fileName = path.basename(fullFilePath);
-  console.log(`\n🚀 Embedding start for: ${fileName}`);
+  console.log(`\n🚀 Starting embedding process for: ${fileName}`);
 
+  // Step 1: Ensure Qdrant collection exists
+  console.log("📦 Ensuring Qdrant collection exists...");
+  await ensureCollection();
+  console.log("✅ Qdrant collection ready.");
+
+  // Step 2: Validate input file
   if (!fs.existsSync(fullFilePath)) {
     console.error(`❌ File does not exist: ${fileName}`);
     return;
   }
 
+  // Step 3: Check if already embedded
   const targetPath = path.join(EMBEDDING_DIR, fileName);
   if (fs.existsSync(targetPath)) {
-    console.warn(`⏭️ Skipping ${fileName} (already processed)`);
+    console.warn(`⏭️ Skipping ${fileName} (already embedded)`);
     return;
   }
 
+  // Step 4: Read text content
+  console.log(`📖 Reading file: ${fullFilePath}`);
   const rawText = fs.readFileSync(fullFilePath, "utf-8");
   if (!rawText || rawText.trim().length < 10) {
-    console.warn(`⚠️ Empty or short file: ${fileName}`);
+    console.warn(`⚠️ File is empty or too short: ${fileName}`);
     return;
   }
 
+  // Step 5: Clean text
+  console.log("🧹 Cleaning extracted text...");
   const cleanedText = cleanText(rawText);
-  const chunks = chunkText(cleanedText);
-  const metadata = extractMetadata(cleanedText);
+  console.log("✅ Text cleaned.");
 
-  console.log(`📄 ${fileName} → ${chunks.length} chunks`);
+  // Step 6: Chunk text
+  console.log("✂️ Chunking text into blocks...");
+  const chunks = chunkText(cleanedText);
+  console.log(`✅ ${chunks.length} chunks created.`);
+
+  // Step 7: Extract metadata
+  console.log("🔍 Extracting metadata...");
+  const metadata = extractMetadata(cleanedText);
   console.log("🧾 Extracted Metadata:", metadata);
 
+  // Step 8: Begin embedding process
+  console.log("🧠 Starting embedding and saving to Qdrant...");
   const progress = new cliProgress.SingleBar(
     {},
     cliProgress.Presets.shades_classic
@@ -159,7 +178,7 @@ async function embedTextFileAndSave(fullFilePath) {
           ...metadata,
         },
       });
-      console.log(`✅ Saved chunk ${i + 1}/${chunks.length} to Qdrant.`);
+      console.log(`✅ Chunk ${i + 1}/${chunks.length} saved to Qdrant.`);
       successCount++;
     } catch (err) {
       console.error(`❌ Failed to save chunk ${i}:`, err.message);
@@ -170,23 +189,30 @@ async function embedTextFileAndSave(fullFilePath) {
 
   progress.stop();
 
+  // Step 9: Trigger optimizer
+  console.log("⚙️ Updating optimizer config in Qdrant...");
   try {
     await axios.patch(
       `${QDRANT_URL}/collections/idea-valut`,
       { optimizer_config: { indexing_threshold: 1 } },
       { headers: { "Content-Type": "application/json" } }
     );
-    console.log("🧠 Indexing threshold updated for immediate optimization.");
+    console.log("✅ Optimizer indexing threshold set to 1.");
   } catch (err) {
     console.error(
-      "❌ Failed optimizer config:",
+      "❌ Optimizer config failed:",
       err.response?.data || err.message
     );
   }
 
+  // Step 10: Move processed file
+  console.log(`📂 Moving ${fileName} to embeddings directory...`);
   fs.renameSync(fullFilePath, targetPath);
-  console.log(`📁 Moved ${fileName} → public/embeddings`);
-  console.log(`✅ Completed: ${successCount}/${chunks.length} chunks saved.`);
+  console.log(`📁 Moved to: ${targetPath}`);
+
+  // Final Summary
+  console.log(`🎉 Completed embedding for ${fileName}`);
+  console.log(`📌 Saved ${successCount}/${chunks.length} chunks to Qdrant.\n`);
 }
 
 module.exports = embedTextFileAndSave;
