@@ -29,8 +29,9 @@ function normalizeFileName(fileName) {
   return path
     .basename(fileName, path.extname(fileName))
     .toLowerCase()
-    .replace(/[\[\]\(\)\s]/g, "_")
-    .replace(/_+/g, "_");
+    .replace(/[^a-z0-9]/g, "_")
+    .replace(/_+/g, "_") // prevent multiple underscores
+    .replace(/^_+|_+$/g, "");
 }
 
 const processFile = async (file, idea_id, user_id, retry = 0) => {
@@ -134,26 +135,27 @@ const processExternalReferences = async (
   for (const ref of external_references) {
     try {
       let text = "";
-      if (ref.youtube_link) {
-        console.log(`🎥 Getting transcript for: ${ref.youtube_link}`);
-        text = await getTranscriptFromRapidAPI(ref.youtube_link);
-      } else if (ref.website_url) {
-        console.log(`🌐 Scraping website: ${ref.website_url}`);
-        text = await scrapeWebsite(ref.website_url);
+      const url = ref.url?.trim();
+      const label = ref.label?.toLowerCase();
+
+      if (label === "youtube" && url.includes("youtu")) {
+        console.log(`🎥 Getting transcript for: ${url}`);
+        text = await getTranscriptFromRapidAPI(url);
+      } else if (label === "website" && url.startsWith("http")) {
+        console.log(`🌐 Scraping website: ${url}`);
+        text = await scrapeWebsite(url);
       }
 
       if (text) {
         externalTextResults.push({
           text,
-          originalname: ref.title || ref.youtube_link || ref.website_url,
-          sourceType: ref.youtube_link ? "youtube" : "website",
+          originalname: ref.label || url,
+          sourceType: label === "youtube" ? "youtube" : "website",
         });
       }
     } catch (err) {
       console.error(
-        `❌ Failed to process external ref: ${
-          ref.youtube_link || ref.website_url
-        }`,
+        `❌ Failed to process external ref: ${ref.url}`,
         err.message
       );
     }

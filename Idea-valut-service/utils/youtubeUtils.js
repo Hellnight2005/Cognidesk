@@ -6,9 +6,16 @@ async function getTranscriptFromRapidAPI(youtubeUrl) {
   const videoId = youtubeUrl.match(
     /(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/
   )?.[1];
-  if (!videoId) throw new Error("❌ Invalid YouTube URL");
+
+  if (!videoId) {
+    console.error("❌ Invalid YouTube URL:", youtubeUrl);
+    return null;
+  }
+
+  console.log(`🔍 Extracted Video ID: ${videoId}`);
 
   try {
+    console.log("📡 Sending request to RapidAPI...");
     const response = await axios.get(
       "https://youtube-transcriptor.p.rapidapi.com/transcript",
       {
@@ -22,30 +29,34 @@ async function getTranscriptFromRapidAPI(youtubeUrl) {
         },
       }
     );
-
+    console.log("✅ Response received from RapidAPI", response.data);
     const transcriptObj = Array.isArray(response.data)
       ? response.data[0]
       : null;
 
     if (!transcriptObj || !transcriptObj.transcriptionAsText) {
-      console.warn("⚠️ No transcript available.");
+      console.warn("⚠️ No transcript available for:", videoId);
       return null;
     }
 
     const text = transcriptObj.transcriptionAsText;
 
-    // Save to file
+    // Ensure transcript directory exists
     const outputDir = path.join(__dirname, "../public/transcripts");
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+      console.log(`📁 Created directory: ${outputDir}`);
+    }
 
+    // Write transcript to file
     const filePath = path.join(outputDir, `${videoId}.txt`);
     fs.writeFileSync(filePath, text);
 
-    console.log("✅ Transcript saved at:", filePath);
+    console.log("✅ Transcript saved successfully:", filePath);
     return filePath;
   } catch (err) {
     console.error(
-      "❌ Error fetching transcript:",
+      "❌ Error fetching transcript from RapidAPI:",
       err.response?.data || err.message
     );
     return null;
