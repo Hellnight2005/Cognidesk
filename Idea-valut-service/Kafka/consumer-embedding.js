@@ -25,13 +25,15 @@ if (!fs.existsSync(CONVERTED_DIR))
   fs.mkdirSync(CONVERTED_DIR, { recursive: true });
 
 // 🔧 Normalize file names (e.g. "UE_Brochure[1].pdf" → "ue_brochure_1_.txt")
+
 function normalizeFileName(fileName) {
   return path
-    .basename(fileName, path.extname(fileName))
+    .basename(fileName, path.extname(fileName)) // remove extension
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "_")
-    .replace(/_+/g, "_") // prevent multiple underscores
-    .replace(/^_+|_+$/g, "");
+    .replace(/[()]/g, "") // optional: remove brackets like (1)
+    .replace(/[^a-z0-9]/g, "_") // replace non-alphanumerics with "_"
+    .replace(/_+/g, "_") // collapse multiple "_"
+    .replace(/^_+|_+$/g, ""); // trim leading/trailing "_"
 }
 
 const processFile = async (file, idea_id, user_id, retry = 0) => {

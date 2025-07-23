@@ -22,11 +22,6 @@ const FileSchema = new Schema(
     drive_file_link: { type: String, required: true },
     video_duration_minutes: { type: Number, default: null },
     uploaded_at: { type: Date, required: true },
-    embedding_status: {
-      type: String,
-      enum: ["pending", "completed", "failed"],
-      default: "pending",
-    },
   },
   { _id: false }
 );

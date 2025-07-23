@@ -18,6 +18,15 @@ const kafka = new Kafka({
 
 const consumer = kafka.consumer({ groupId: "drive-uploader-group" });
 
+// 📦 Helper to categorize file type
+function detectFileCategory(mimetype) {
+  if (mimetype.startsWith("video/")) return "Video";
+  if (mimetype.startsWith("image/")) return "Image";
+  if (mimetype === "application/pdf" || mimetype.startsWith("text/"))
+    return "Document";
+  return "Other";
+}
+
 async function startDriveConsumer() {
   await consumer.connect();
   await consumer.subscribe({
@@ -65,7 +74,6 @@ async function startDriveConsumer() {
           rootFolderId
         );
 
-        const timestamp = Date.now();
         const bufferFiles = [];
 
         for (const file of files || []) {
@@ -78,7 +86,7 @@ async function startDriveConsumer() {
           const buffer = fs.readFileSync(filePath);
           const ext = path.extname(file.originalname);
           const baseName = path.basename(file.originalname, ext);
-          const renamedName = `${timestamp}_${baseName}${ext}`;
+          const renamedName = `${baseName}${ext}`;
 
           bufferFiles.push({
             buffer,
@@ -99,10 +107,20 @@ async function startDriveConsumer() {
           userId
         );
 
-        const uploadedFiles = rawUploads.map((uploaded, idx) => ({
-          ...uploaded,
-          original_name: bufferFiles[idx].original_name,
-        }));
+        const uploadedFiles = rawUploads.map((uploaded, idx) => {
+          const originalFile = bufferFiles[idx];
+
+          return {
+            originalname: originalFile.original_name,
+            file_name: uploaded.file_name,
+            file_category: detectFileCategory(originalFile.mimetype),
+            file_type: originalFile.mimetype,
+            drive_folder_link: uploaded.drive_folder_link,
+            drive_file_link: uploaded.drive_file_link,
+            video_duration_minutes: null,
+            uploaded_at: new Date(),
+          };
+        });
 
         await Idea.findByIdAndUpdate(ideaId, {
           $push: { attached_files: { $each: uploadedFiles } },

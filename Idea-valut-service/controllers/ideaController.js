@@ -76,6 +76,10 @@ exports.createIdea = async (req, res) => {
     const kafkaPayload = {
       idea_id: newIdea._id,
       user_id: created_by_user_id,
+      title: idea_title,
+      desc: idea_description,
+      category: category,
+      sub_category: sub_category,
       files: savedFiles,
       external_references: external_references || [],
       event: "IDEA_CREATED",
