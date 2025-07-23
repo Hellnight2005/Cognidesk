@@ -24,47 +24,95 @@ async function extractText(filePath) {
   const baseName = path.basename(filePath, ext);
 
   try {
+    let text = "";
+
     if (ext === ".docx") {
       const result = await mammoth.extractRawText({ path: filePath });
-      saveToTextFile(`docx_${baseName}`, result.value || "");
+      text = result.value || "";
     } else if (ext === ".md" || ext === ".txt") {
-      const text = fs.readFileSync(filePath, "utf-8");
-      saveToTextFile(`text_${baseName}`, text);
+      text = fs.readFileSync(filePath, "utf-8");
     } else if (ext === ".pdf") {
       const buffer = fs.readFileSync(filePath);
       const result = await pdfParse(buffer);
-      saveToTextFile(`pdf_${baseName}`, result.text || "");
+      text = result.text || "";
     } else {
       console.log(`⏭️ Skipped unsupported file: ${filePath}`);
+      return;
     }
+
+    const cleaned = text.trim();
+    if (!cleaned || cleaned.length < 10) {
+      throw new Error("No meaningful text extracted");
+    }
+
+    saveToTextFile(`${baseName}`, cleaned);
   } catch (err) {
     console.error(`❌ Failed to extract ${filePath}:`, err.message);
+    throw err;
   }
 }
 
 /**
  * Accept either a file or a folder of files
  */
+async function extractText(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const baseName = path.basename(filePath, ext);
+
+  try {
+    let text = "";
+
+    if (ext === ".docx") {
+      const result = await mammoth.extractRawText({ path: filePath });
+      text = result.value || "";
+    } else if (ext === ".md" || ext === ".txt") {
+      text = fs.readFileSync(filePath, "utf-8");
+    } else if (ext === ".pdf") {
+      const buffer = fs.readFileSync(filePath);
+      const result = await pdfParse(buffer);
+      text = result.text || "";
+    } else {
+      console.log(`⏭️ Skipped unsupported file: ${filePath}`);
+      return null;
+    }
+
+    const cleaned = text.trim();
+    if (!cleaned || cleaned.length < 10) {
+      throw new Error("No meaningful text extracted");
+    }
+
+    saveToTextFile(`${baseName}`, cleaned);
+    return cleaned;
+  } catch (err) {
+    console.error(`❌ Failed to extract ${filePath}:`, err.message);
+    throw err;
+  }
+}
+
+// ✨ UPDATED to return the actual extracted text
 async function extractTextFromPath(inputPath) {
   if (!fs.existsSync(inputPath)) {
     console.error("❌ Path does not exist:", inputPath);
-    return;
+    return null;
   }
 
   const stats = fs.statSync(inputPath);
 
   if (stats.isFile()) {
-    await extractText(inputPath);
+    return await extractText(inputPath);
   } else if (stats.isDirectory()) {
     const files = fs.readdirSync(inputPath);
     for (const file of files) {
       const fullPath = path.join(inputPath, file);
       if (fs.statSync(fullPath).isFile()) {
-        await extractText(fullPath);
+        const text = await extractText(fullPath);
+        if (text) return text;
       }
     }
+    return null;
   } else {
     console.error("❌ Input is neither file nor directory:", inputPath);
+    return null;
   }
 }
 
