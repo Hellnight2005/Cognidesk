@@ -80,7 +80,7 @@ async function generateEmbedding(text, retries = 3) {
   }
 }
 
-async function embedTextFileAndSave(fullFilePath) {
+async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
   const fileName = path.basename(fullFilePath);
   console.log(`\n🚀 Starting embedding process for: ${fileName}`);
 
@@ -117,8 +117,8 @@ async function embedTextFileAndSave(fullFilePath) {
 
     try {
       await saveToQdrant({
-        idea_id: null,
-        user_id: null,
+        idea_id: idea_id,
+        user_id: user_id,
         file_name: fileName,
         vector,
         original_text: chunk,
