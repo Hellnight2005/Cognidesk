@@ -13,6 +13,8 @@ router.post(
   ideaController.createIdea
 );
 
+router.delete("/:id", ideaController.deleteIdea);
+
 // Basic CRUD
 // router.get("/", ideaController.getAllIdeas);
 // router.get("/:id", ideaController.getIdeaById);

@@ -1,90 +1,116 @@
 const { google } = require("googleapis");
 const drive = () => google.drive({ version: "v3" });
 
-/**
- * Generate a Google OAuth2 auth instance.
- */
-const getAuth = (accessToken) => {
-  if (!accessToken) throw new Error("Access token is required");
+// 🔧 Create a new folder in Google Drive
+const createFolder = async (name, accessToken, parentId = null) => {
   const auth = new google.auth.OAuth2();
   auth.setCredentials({ access_token: accessToken });
-  return auth;
-};
 
-/**
- * Create a folder in Google Drive.
- * @param {string} name - Folder name.
- * @param {string} accessToken - Google OAuth2 access token.
- * @param {string|null} parentId - Optional parent folder ID.
- */
-const createFolder = async (name, accessToken, parentId = null) => {
-  if (!name || typeof name !== "string") throw new Error("Invalid folder name");
-  const auth = getAuth(accessToken);
-
-  const metadata = {
+  const fileMetadata = {
     name,
     mimeType: "application/vnd.google-apps.folder",
     ...(parentId ? { parents: [parentId] } : {}),
   };
 
-  try {
-    const res = await drive().files.create({
-      auth,
-      resource: metadata,
-      fields: "id",
-    });
-    return res.data.id;
-  } catch (err) {
-    console.error("[Drive] Failed to create folder:", err.message);
-    throw new Error("Drive: Folder creation failed");
-  }
+  const res = await drive().files.create({
+    auth,
+    resource: fileMetadata,
+    fields: "id",
+  });
+
+  return res.data.id;
 };
 
-/**
- * Find folder by name.
- * Returns first matching folder ID or null.
- */
+// 🔍 Find a folder by name
 const findFolder = async (name, accessToken) => {
-  if (!name || typeof name !== "string") throw new Error("Invalid folder name");
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
 
-  const auth = getAuth(accessToken);
-  const query = `mimeType='application/vnd.google-apps.folder' and name='${name}' and trashed=false`;
+  const q = `mimeType='application/vnd.google-apps.folder' and name='${name}' and trashed=false`;
+  const res = await drive().files.list({
+    auth,
+    q,
+    fields: "files(id, name)",
+  });
 
-  try {
-    const res = await drive().files.list({
-      auth,
-      q: query,
-      fields: "files(id, name)",
-      spaces: "drive",
-    });
+  return res.data.files[0]?.id || null;
+};
 
-    const folders = res.data.files;
-    return folders.length > 0 ? folders[0].id : null;
-  } catch (err) {
-    console.error("[Drive] Failed to find folder:", err.message);
-    throw new Error("Drive: Folder search failed");
+// ✅ Get or create root folder "CogniDesk"
+const getOrCreateRootFolder = async (accessToken) => {
+  let rootFolderId = await findFolder("CogniDesk", accessToken);
+  if (!rootFolderId) {
+    console.log("📁 'CogniDesk' folder not found. Creating...");
+    rootFolderId = await createFolder("CogniDesk", accessToken);
+    console.log("✅ 'CogniDesk' folder created:", rootFolderId);
+  } else {
+    console.log("📁 'CogniDesk' folder found:", rootFolderId);
   }
+  return rootFolderId;
 };
 
 /**
- * Delete a file or folder by ID.
+ * Deletes individual files AND their parent folder from Google Drive.
+ * @param {Array} attachedFiles - Array of file objects containing drive_file_link and drive_folder_link
+ * @param {string} accessToken - Google OAuth2 access token
  */
-const deleteFileFromDrive = async (fileId, accessToken) => {
-  if (!fileId || typeof fileId !== "string") throw new Error("Invalid file ID");
+async function deleteDriveFilesAndFolder(attachedFiles, accessToken) {
+  if (!accessToken || !attachedFiles?.length) return;
 
-  const auth = getAuth(accessToken);
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
+  const drive = google.drive({ version: "v3", auth });
 
-  try {
-    await drive().files.delete({ auth, fileId });
-    return { success: true, message: "Deleted successfully" };
-  } catch (err) {
-    console.error("[Drive] Deletion failed:", err.message);
-    throw new Error("Drive: File deletion failed");
+  const folderIdSet = new Set();
+
+  // 1️⃣ Delete all files
+  for (const file of attachedFiles) {
+    try {
+      const fileId = extractFileId(file.drive_file_link);
+      const folderId = extractFolderId(file.drive_folder_link);
+      if (folderId) folderIdSet.add(folderId);
+
+      if (fileId) {
+        await drive.files.delete({ fileId });
+        console.log(`🗑️ Deleted file: ${fileId}`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ Failed to delete file:`, err.message);
+    }
   }
-};
+
+  // 2️⃣ Delete the parent folder (once per unique folderId)
+  for (const folderId of folderIdSet) {
+    try {
+      await drive.files.delete({ fileId: folderId });
+      console.log(`📁 Deleted folder: ${folderId}`);
+    } catch (err) {
+      console.warn(`⚠️ Failed to delete folder ${folderId}:`, err.message);
+    }
+  }
+}
+
+/**
+ * Extracts fileId from a drive link like:
+ * https://drive.google.com/file/d/1abcXYZ/view
+ */
+function extractFileId(driveFileLink) {
+  const match = driveFileLink?.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extracts folderId from a link like:
+ * https://drive.google.com/drive/folders/1abcXYZ
+ */
+function extractFolderId(folderLink) {
+  const match = folderLink?.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
 
 module.exports = {
   createFolder,
   findFolder,
-  deleteFileFromDrive,
+  getOrCreateRootFolder,
+  deleteDriveFilesAndFolder,
 };

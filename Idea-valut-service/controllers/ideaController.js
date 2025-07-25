@@ -1,26 +1,35 @@
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 const mongoose = require("mongoose");
+
 const sharedModels = require("../../shared-models");
 const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
+
 const sendToKafka = require("../Kafka/producer");
-const { deleteFileFromDrive } = require("../utils/driveHelper");
-const { deleteEmbeddingsByIdeaId } = require("../utils/embedding");
-// 📁 Ensure uploads folder exists
+const {
+  deleteDriveFilesAndFolder, // ✅ added
+} = require("../utils/driveHelper");
+const { deleteVectorsByIdeaId } = require("../utils/vectorDb");
+
+// Ensure uploads folder exists
 const uploadDir = path.join(__dirname, "..", "public", "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+/** ===============================
+ * 🎯 CREATE IDEA
+ * =============================== */
 exports.createIdea = async (req, res) => {
   try {
-    // 🧠 Parse external_references from string if sent via Postman/form-data
+    // 🔄 Parse external_references if sent as string
     if (typeof req.body.external_references === "string") {
       try {
         req.body.external_references = JSON.parse(
           req.body.external_references.trim()
         );
       } catch (err) {
-        console.error("Invalid JSON in external_references:", err.message);
+        console.error("❌ Invalid JSON in external_references:", err.message);
         return res
           .status(400)
           .json({ message: "Invalid format for external_references" });
@@ -41,7 +50,7 @@ exports.createIdea = async (req, res) => {
       created_by_user_id,
     } = req.body;
 
-    // 1️⃣ Save idea metadata in MongoDB
+    // 1️⃣ Save metadata to MongoDB
     const newIdea = await Idea.create({
       idea_title,
       idea_description,
@@ -58,92 +67,108 @@ exports.createIdea = async (req, res) => {
       embedding_status: "pending",
     });
 
-    // 2️⃣ Store files on disk
+    // 2️⃣ Save uploaded files (locally)
     const savedFiles = [];
     for (const file of req.files || []) {
-      const uniqueFilename = `${file.originalname}`;
-      const filePath = path.join(uploadDir, uniqueFilename);
+      const safeFilename = `${file.originalname.replace(
+        /[^a-zA-Z0-9_.-]/g,
+        ""
+      )}`;
+      const filePath = path.join(uploadDir, safeFilename);
       fs.writeFileSync(filePath, file.buffer);
 
       savedFiles.push({
-        file_name: uniqueFilename,
+        file_name: safeFilename,
         originalname: file.originalname,
         mimetype: file.mimetype,
         path: filePath,
       });
     }
 
-    // 3️⃣ Send to Kafka with event
-    const kafkaPayload = {
+    // 3️⃣ Kafka: Queue for async processing
+    await sendToKafka("idea-file-process", {
       idea_id: newIdea._id,
       user_id: created_by_user_id,
       title: idea_title,
       desc: idea_description,
-      category: category,
-      sub_category: sub_category,
+      category,
+      sub_category,
       files: savedFiles,
       external_references: external_references || [],
       event: "IDEA_CREATED",
-    };
+    });
 
-    await sendToKafka("idea-file-process", kafkaPayload);
-
-    // 4️⃣ Respond to client
+    // ✅ Respond
     res.status(201).json({
-      message:
-        "✅ Idea created successfully. Files and references queued for embedding.",
+      message: "✅ Idea created. Files and references queued for embedding.",
       idea: newIdea,
     });
   } catch (error) {
     console.error("❌ Error creating idea:", error);
-    res.status(500).json({ error: "Failed to create idea." });
+    res.status(500).json({ message: "Failed to create idea." });
   }
 };
 
+/** ===============================
+ * 🗑️ DELETE IDEA
+ * =============================== */
 exports.deleteIdea = async (req, res) => {
   try {
     const ideaId = req.params.id;
 
     // 1️⃣ Find the idea
     const idea = await Idea.findById(ideaId);
-    if (!idea) {
-      return res.status(404).json({ message: "Idea not found" });
-    }
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
 
-    // 2️⃣ Delete files from Google Drive
-    for (const file of idea.attached_files || []) {
-      const match = file.drive_file_link.match(/\/d\/(.*?)\//);
-      const fileId = match ? match[1] : null;
+    const userId = idea.created_by_user_id;
+    let accessToken = req.headers["x-google-access-token"] || null;
 
-      if (fileId) {
-        try {
-          await deleteFileFromDrive(fileId);
-        } catch (err) {
-          console.warn(
-            `Failed to delete file from Drive: ${fileId}`,
-            err.message
-          );
-        }
+    // 2️⃣ Fetch user to get Google access token (if not passed in header)
+    if (!accessToken && userId) {
+      try {
+        const { data: user } = await axios.get(
+          `http://localhost:3001/api/users/${userId}`
+        );
+        accessToken = user?.auth?.providers?.google?.access_token || null;
+      } catch (err) {
+        console.warn(
+          `⚠️ Unable to fetch user (${userId}) for Drive access token:`,
+          err.message
+        );
       }
     }
 
-    // 3️⃣ Delete embeddings from vector DB (Chroma/Weaviate/etc.)
+    // 3️⃣ Delete files & folders from Google Drive
+    if (accessToken) {
+      try {
+        await deleteDriveFilesAndFolder(idea.attached_files, accessToken);
+      } catch (err) {
+        console.warn("❌ Drive file/folder deletion failed:", err.message);
+      }
+    } else {
+      console.warn(
+        "⚠️ No Google access token provided. Skipping Drive cleanup."
+      );
+    }
+
+    // 4️⃣ Delete from vector DB
     try {
-      await deleteEmbeddingsByIdeaId(ideaId); // You define this
+      await deleteVectorsByIdeaId(ideaId);
     } catch (err) {
       console.warn(
-        `Failed to delete embeddings for idea ${ideaId}:`,
+        `❌ Vector DB deletion failed for idea ${ideaId}:`,
         err.message
       );
     }
 
-    // 4️⃣ Delete MongoDB record
+    // 5️⃣ Delete MongoDB record
     await Idea.findByIdAndDelete(ideaId);
 
-    // ✅ Done
-    res.json({ message: "Idea and all associated data deleted successfully." });
+    res.json({
+      message: "✅ Idea and all associated data deleted successfully.",
+    });
   } catch (error) {
     console.error("❌ Error deleting idea:", error);
-    res.status(500).json({ message: "Failed to delete idea" });
+    res.status(500).json({ message: "Internal error while deleting idea." });
   }
 };

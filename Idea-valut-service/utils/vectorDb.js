@@ -106,24 +106,20 @@ async function searchFromQdrant(vector, limit = 300) {
   }
 }
 
-async function deleteVectorsByFileName(file_name) {
+async function deleteVectorsByIdeaId(idea_id) {
   try {
     await client.delete(COLLECTION_NAME, {
       filter: {
-        must: [
-          {
-            key: "file_name",
-            match: {
-              value: file_name,
-            },
-          },
-        ],
+        must: [{ key: "idea_id", match: { value: idea_id } }],
       },
     });
 
-    log.info("Vectors deleted for file", { file_name });
+    log.info("🧹 Vectors deleted for idea ID", { idea_id });
   } catch (err) {
-    log.error("Failed to delete vectors", { file_name, error: err.message });
+    log.error("❌ Failed to delete vectors by idea ID", {
+      idea_id,
+      error: err.message,
+    });
     throw err;
   }
 }
@@ -132,5 +128,5 @@ module.exports = {
   ensureCollection,
   saveToQdrant,
   searchFromQdrant,
-  deleteVectorsByFileName,
+  deleteVectorsByIdeaId,
 };

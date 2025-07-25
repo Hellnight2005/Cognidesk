@@ -7,7 +7,11 @@ const { Kafka } = require("kafkajs");
 
 const sharedModels = require("../../shared-models");
 const { googleUploadFiles } = require("../utils/googleDriveUploader");
-const { findFolder, createFolder } = require("../utils/driveHelper");
+const {
+  findFolder,
+  createFolder,
+  getOrCreateRootFolder,
+} = require("../utils/driveHelper");
 
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 if (!USER_SERVICE_URL) throw new Error("❌ USER_SERVICE_URL is not set");
@@ -78,13 +82,11 @@ async function startDriveConsumer() {
         if (!accessToken)
           throw new Error("Access token was not returned from user service");
 
-        let rootFolderId = await findFolder("CogniDesk", accessToken);
-        if (!rootFolderId) {
-          rootFolderId = await createFolder("CogniDesk", accessToken);
-        }
+        // ✅ Use the new helper
+        const rootFolderId = await getOrCreateRootFolder(accessToken);
 
-        const safeTitle = sanitizeTitle(idea.idea_title);
-        const ideaFolderName = `Idea-${safeTitle}-${Date.now()}`;
+        const ideaFolderName = `${idea.idea_title}`;
+
         const parentFolderId = await createFolder(
           ideaFolderName,
           accessToken,
@@ -115,7 +117,7 @@ async function startDriveConsumer() {
         if (bufferFiles.length === 0)
           throw new Error("No valid files found to upload.");
 
-        const uploads = await googleUploadFiles(
+        const uploadResult = await googleUploadFiles(
           bufferFiles,
           accessToken,
           "Document",
@@ -123,7 +125,14 @@ async function startDriveConsumer() {
           userId
         );
 
-        const uploadedFiles = uploads.map((upload, idx) => {
+        if (!uploadResult || !Array.isArray(uploadResult.success)) {
+          console.error("❌ Invalid upload result:", uploadResult);
+          throw new Error(
+            "Upload failed: googleUploadFiles() did not return expected format."
+          );
+        }
+
+        const uploadedFiles = uploadResult.success.map((upload, idx) => {
           const original = bufferFiles[idx];
           return {
             originalname: original.original_name,
@@ -133,9 +142,16 @@ async function startDriveConsumer() {
             drive_folder_link: upload.drive_folder_link,
             drive_file_link: upload.drive_file_link,
             video_duration_minutes: null,
-            uploaded_at: new Date(),
+            uploaded_at: upload.uploaded_at,
           };
         });
+
+        if (uploadResult.failed?.length > 0) {
+          console.warn(
+            `⚠️ ${uploadResult.failed.length} files failed to upload.`
+          );
+          console.warn(uploadResult.failed);
+        }
 
         await Idea.findByIdAndUpdate(ideaId, {
           $push: { attached_files: { $each: uploadedFiles } },
