@@ -1,3 +1,4 @@
+require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const mongoose = require("mongoose");
@@ -8,23 +9,42 @@ const sharedModels = require("../../shared-models");
 const { googleUploadFiles } = require("../utils/googleDriveUploader");
 const { findFolder, createFolder } = require("../utils/driveHelper");
 
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
+if (!USER_SERVICE_URL) throw new Error("❌ USER_SERVICE_URL is not set");
+
 const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
 
 const kafka = new Kafka({
   clientId: "drive-uploader",
-  brokers: ["localhost:9092"],
+  brokers: process.env.KAFKA_BROKERS?.split(",") || ["localhost:9092"],
 });
 
 const consumer = kafka.consumer({ groupId: "drive-uploader-group" });
 
-// 📦 Helper to categorize file type
 function detectFileCategory(mimetype) {
   if (mimetype.startsWith("video/")) return "Video";
   if (mimetype.startsWith("image/")) return "Image";
-  if (mimetype === "application/pdf" || mimetype.startsWith("text/"))
+  if (["application/pdf", "text/plain", "text/markdown"].includes(mimetype))
     return "Document";
   return "Other";
+}
+
+function sanitizeTitle(title = "Untitled") {
+  return title.replace(/[^\w\s-]/g, "").replace(/\s+/g, "_");
+}
+
+async function getGoogleAccessToken(userId) {
+  try {
+    const res = await axios.get(
+      `${USER_SERVICE_URL}/api/users/${userId}/revoke/google`
+    );
+    return res?.data?.result?.access_token || null;
+  } catch (err) {
+    throw new Error(
+      `Token fetch failed: ${err.response?.data?.message || err.message}`
+    );
+  }
 }
 
 async function startDriveConsumer() {
@@ -35,20 +55,18 @@ async function startDriveConsumer() {
   });
 
   await consumer.run({
-    eachMessage: async ({ topic, partition, message }) => {
+    eachMessage: async ({ message }) => {
       let payload;
       try {
         payload = JSON.parse(message.value.toString());
-        console.log("📦 Kafka message received:", payload);
       } catch (err) {
-        console.error("❌ Failed to parse Kafka message:", err);
+        console.error("❌ Invalid Kafka message format:", err.message);
         return;
       }
 
-      const { idea_id: ideaId, user_id: userId, files } = payload;
-
+      const { idea_id: ideaId, user_id: userId, files = [] } = payload;
       if (!ideaId || !userId) {
-        console.error("❌ Missing ideaId or userId in message");
+        console.error("❌ Missing idea_id or user_id in Kafka payload.");
         return;
       }
 
@@ -56,17 +74,16 @@ async function startDriveConsumer() {
         const idea = await Idea.findById(ideaId);
         if (!idea) throw new Error(`Idea not found for ID: ${ideaId}`);
 
-        const tokenRes = await axios.get(
-          `http://localhost:3001/api/users/${userId}/revoke/google`
-        );
-        const accessToken = tokenRes?.data?.result?.access_token;
-        if (!accessToken) throw new Error("Failed to refresh Google token");
+        const accessToken = await getGoogleAccessToken(userId);
+        if (!accessToken)
+          throw new Error("Access token was not returned from user service");
 
         let rootFolderId = await findFolder("CogniDesk", accessToken);
-        if (!rootFolderId)
+        if (!rootFolderId) {
           rootFolderId = await createFolder("CogniDesk", accessToken);
+        }
 
-        const safeTitle = idea.idea_title?.replace(/\s+/g, "_") || "Untitled";
+        const safeTitle = sanitizeTitle(idea.idea_title);
         const ideaFolderName = `Idea-${safeTitle}-${Date.now()}`;
         const parentFolderId = await createFolder(
           ideaFolderName,
@@ -76,30 +93,29 @@ async function startDriveConsumer() {
 
         const bufferFiles = [];
 
-        for (const file of files || []) {
+        for (const file of files) {
           const filePath = path.resolve(file.path);
           if (!fs.existsSync(filePath)) {
-            console.warn("⚠️ File not found on disk:", filePath);
+            console.warn(`⚠️ File missing: ${filePath}`);
             continue;
           }
 
           const buffer = fs.readFileSync(filePath);
           const ext = path.extname(file.originalname);
-          const baseName = path.basename(file.originalname, ext);
-          const renamedName = `${baseName}${ext}`;
+          const fileName = `${path.basename(file.originalname, ext)}${ext}`;
 
           bufferFiles.push({
             buffer,
-            originalname: renamedName,
+            originalname: fileName,
             original_name: file.originalname,
             mimetype: file.mimetype,
           });
         }
 
         if (bufferFiles.length === 0)
-          throw new Error("No valid files found to upload");
+          throw new Error("No valid files found to upload.");
 
-        const rawUploads = await googleUploadFiles(
+        const uploads = await googleUploadFiles(
           bufferFiles,
           accessToken,
           "Document",
@@ -107,16 +123,15 @@ async function startDriveConsumer() {
           userId
         );
 
-        const uploadedFiles = rawUploads.map((uploaded, idx) => {
-          const originalFile = bufferFiles[idx];
-
+        const uploadedFiles = uploads.map((upload, idx) => {
+          const original = bufferFiles[idx];
           return {
-            originalname: originalFile.original_name,
-            file_name: uploaded.file_name,
-            file_category: detectFileCategory(originalFile.mimetype),
-            file_type: originalFile.mimetype,
-            drive_folder_link: uploaded.drive_folder_link,
-            drive_file_link: uploaded.drive_file_link,
+            originalname: original.original_name,
+            file_name: upload.file_name,
+            file_category: detectFileCategory(original.mimetype),
+            file_type: original.mimetype,
+            drive_folder_link: upload.drive_folder_link,
+            drive_file_link: upload.drive_file_link,
             video_duration_minutes: null,
             uploaded_at: new Date(),
           };
@@ -124,28 +139,21 @@ async function startDriveConsumer() {
 
         await Idea.findByIdAndUpdate(ideaId, {
           $push: { attached_files: { $each: uploadedFiles } },
-          $set: {
-            file_status: "uploaded",
-            drive_folder_id: parentFolderId,
-          },
+          $set: { file_status: "uploaded", drive_folder_id: parentFolderId },
         });
 
         console.log(
-          "🗂️ Local files retained:",
-          files.map((f) => f.path)
-        );
-        console.log(
           `✅ Uploaded ${uploadedFiles.length} files for idea ${ideaId}`
         );
+
+        // Optional: Retain files for audit, or delete them manually if needed
+        console.log("🗂️ Local files retained for audit or processing.");
       } catch (err) {
-        console.error("❌ Drive uploader failed:", err.stack || err.message);
+        console.error("❌ Upload process failed:", err.stack || err.message);
         try {
           await Idea.findByIdAndUpdate(ideaId, { file_status: "failed" });
-        } catch (mongoErr) {
-          console.error(
-            "❌ Failed to update Idea status in MongoDB:",
-            mongoErr.stack || mongoErr.message
-          );
+        } catch (dbErr) {
+          console.error("❌ DB update failed:", dbErr.stack || dbErr.message);
         }
       }
     },

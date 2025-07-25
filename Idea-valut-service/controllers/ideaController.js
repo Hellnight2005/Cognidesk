@@ -5,7 +5,8 @@ const sharedModels = require("../../shared-models");
 const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
 const sendToKafka = require("../Kafka/producer");
-
+const { deleteFileFromDrive } = require("../utils/driveHelper");
+const { deleteEmbeddingsByIdeaId } = require("../utils/embedding");
 // 📁 Ensure uploads folder exists
 const uploadDir = path.join(__dirname, "..", "public", "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -96,5 +97,53 @@ exports.createIdea = async (req, res) => {
   } catch (error) {
     console.error("❌ Error creating idea:", error);
     res.status(500).json({ error: "Failed to create idea." });
+  }
+};
+
+exports.deleteIdea = async (req, res) => {
+  try {
+    const ideaId = req.params.id;
+
+    // 1️⃣ Find the idea
+    const idea = await Idea.findById(ideaId);
+    if (!idea) {
+      return res.status(404).json({ message: "Idea not found" });
+    }
+
+    // 2️⃣ Delete files from Google Drive
+    for (const file of idea.attached_files || []) {
+      const match = file.drive_file_link.match(/\/d\/(.*?)\//);
+      const fileId = match ? match[1] : null;
+
+      if (fileId) {
+        try {
+          await deleteFileFromDrive(fileId);
+        } catch (err) {
+          console.warn(
+            `Failed to delete file from Drive: ${fileId}`,
+            err.message
+          );
+        }
+      }
+    }
+
+    // 3️⃣ Delete embeddings from vector DB (Chroma/Weaviate/etc.)
+    try {
+      await deleteEmbeddingsByIdeaId(ideaId); // You define this
+    } catch (err) {
+      console.warn(
+        `Failed to delete embeddings for idea ${ideaId}:`,
+        err.message
+      );
+    }
+
+    // 4️⃣ Delete MongoDB record
+    await Idea.findByIdAndDelete(ideaId);
+
+    // ✅ Done
+    res.json({ message: "Idea and all associated data deleted successfully." });
+  } catch (error) {
+    console.error("❌ Error deleting idea:", error);
+    res.status(500).json({ message: "Failed to delete idea" });
   }
 };
