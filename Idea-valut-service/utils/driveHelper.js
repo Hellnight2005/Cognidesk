@@ -6,6 +6,24 @@ const createFolder = async (name, accessToken, parentId = null) => {
   const auth = new google.auth.OAuth2();
   auth.setCredentials({ access_token: accessToken });
 
+  // 🧠 Check if folder with same name and parent already exists
+  let q = `mimeType='application/vnd.google-apps.folder' and name='${name}' and trashed=false`;
+  if (parentId) {
+    q += ` and '${parentId}' in parents`;
+  }
+
+  const existing = await drive().files.list({
+    auth,
+    q,
+    fields: "files(id, name)",
+  });
+
+  if (existing.data.files.length > 0) {
+    console.log(`📁 Folder '${name}' already exists.`);
+    return existing.data.files[0].id;
+  }
+
+  // ✅ If not exists, create it
   const fileMetadata = {
     name,
     mimeType: "application/vnd.google-apps.folder",

@@ -6,7 +6,6 @@ const sharedModels = require("../../shared-models");
 
 const { extractTextFromPath } = require("../utils/extractText");
 const { extractTextWithPdfParse } = require("../utils/extractPDF");
-const { getTranscriptFromRapidAPI } = require("../utils/youtubeUtils");
 const { scrapeWebsite } = require("../utils/webScraper");
 const embedTextFileAndSave = require("../utils/embedding");
 
@@ -14,7 +13,7 @@ const Idea =
   mongoose.models.Idea || mongoose.model("Idea", sharedModels.IdeaSchema);
 
 const kafka = new Kafka({ clientId: "embedder", brokers: ["localhost:9092"] });
-const consumer = kafka.consumer({ groupId: "embed-group" });
+const consumer = kafka.consumer({ groupId: "idea-embedder-group" });
 
 const EMBEDDING_DIR = path.resolve("public/embeddings");
 const CONVERTED_DIR = path.resolve("public/converted");
@@ -24,16 +23,14 @@ if (!fs.existsSync(EMBEDDING_DIR))
 if (!fs.existsSync(CONVERTED_DIR))
   fs.mkdirSync(CONVERTED_DIR, { recursive: true });
 
-// 🔧 Normalize file names (e.g. "UE_Brochure[1].pdf" → "ue_brochure_1_.txt")
-
 function normalizeFileName(fileName) {
   return path
-    .basename(fileName, path.extname(fileName)) // remove extension
+    .basename(fileName, path.extname(fileName))
     .toLowerCase()
-    .replace(/[()]/g, "") // optional: remove brackets like (1)
-    .replace(/[^a-z0-9]/g, "_") // replace non-alphanumerics with "_"
-    .replace(/_+/g, "_") // collapse multiple "_"
-    .replace(/^_+|_+$/g, ""); // trim leading/trailing "_"
+    .replace(/[()]/g, "")
+    .replace(/[^a-z0-9]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 const processFile = async (file, idea_id, user_id, retry = 0) => {
@@ -41,10 +38,7 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
     let text = "";
     let filePath = "";
 
-    if (file.youtube_link) {
-      console.log(`🎥 Getting transcript for: ${file.youtube_link}`);
-      text = await getTranscriptFromRapidAPI(file.youtube_link);
-    } else if (file.website_url) {
+    if (file.website_url) {
       console.log(`🌐 Scraping website: ${file.website_url}`);
       text = await scrapeWebsite(file.website_url);
     } else {
@@ -69,7 +63,6 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
 
     if (!text) throw new Error("No text extracted");
 
-    // 🔁 Embed based on normalized filename (to match converted .txt)
     const normalizedBase = normalizeFileName(file.file_name);
     const txtFileName = `${normalizedBase}.txt`;
     const txtFilePath = path.join(CONVERTED_DIR, txtFileName);
@@ -87,13 +80,10 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
       { $set: { "attached_files.$.embedding_status": "completed" } }
     );
 
-    // 🗑️ Delete original uploaded file after embedding
-    // 🗑️ Delete original uploaded file after embedding
     if (file.path && fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
       console.log(`🗑️ Deleted uploaded file: ${file.path}`);
 
-      // Also delete converted .txt
       const convertedPath = path.join(
         CONVERTED_DIR,
         normalizeFileName(file.file_name) + ".txt"
@@ -103,7 +93,6 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
         console.log(`🗑️ Deleted converted file: ${convertedPath}`);
       }
 
-      // Also delete embedded file
       const embeddedPath = path.join(EMBEDDING_DIR, file.file_name);
       if (fs.existsSync(embeddedPath)) {
         fs.unlinkSync(embeddedPath);
@@ -140,10 +129,7 @@ const processExternalReferences = async (
       const url = ref.url?.trim();
       const label = ref.label?.toLowerCase();
 
-      if (label === "youtube" && url.includes("youtu")) {
-        console.log(`🎥 Getting transcript for: ${url}`);
-        text = await getTranscriptFromRapidAPI(url);
-      } else if (label === "website" && url.startsWith("http")) {
+      if (label === "website" && url.startsWith("http")) {
         console.log(`🌐 Scraping website: ${url}`);
         text = await scrapeWebsite(url);
       }
@@ -152,7 +138,7 @@ const processExternalReferences = async (
         externalTextResults.push({
           text,
           originalname: ref.label || url,
-          sourceType: label === "youtube" ? "youtube" : "website",
+          sourceType: "website",
         });
       }
     } catch (err) {
@@ -183,10 +169,7 @@ const processExternalReferences = async (
 
 const startEmbeddingConsumer = async () => {
   await consumer.connect();
-  await consumer.subscribe({
-    topic: "idea-file-process",
-    fromBeginning: false,
-  });
+  await consumer.subscribe({ topic: "idea-file-process", fromBeginning: true });
 
   await consumer.run({
     eachMessage: async ({ message }) => {

@@ -17,6 +17,7 @@ async function ensureCollection() {
       return;
     }
   } catch (err) {
+    // If it's not a 404 (missing collection), throw it
     if (err.response?.status !== 404) {
       log.error(
         "Failed to check collection:",
@@ -46,6 +47,13 @@ async function ensureCollection() {
 
     log.info(`Created collection: ${COLLECTION_NAME}`);
   } catch (err) {
+    if (err.response?.status === 409) {
+      log.warn(
+        `Collection '${COLLECTION_NAME}' already exists, skipping creation.`
+      );
+      return; // No need to throw
+    }
+
     log.error("Failed to create collection", {
       status: err.response?.status,
       data: err.response?.data,
@@ -73,6 +81,23 @@ async function saveToQdrant({
   };
 
   try {
+    // 🔍 Check if any chunk with same file_name exists
+    const existing = await client.scroll(COLLECTION_NAME, {
+      filter: {
+        must: [{ key: "file_name", match: { value: file_name } }],
+      },
+      limit: 1,
+    });
+
+    if (existing?.points?.length > 0) {
+      log.warn("🛑 File already indexed, skipping", {
+        idea_id,
+        file_name: file_name,
+      });
+      return; // Skip duplicate
+    }
+
+    // 💾 Save new vector
     await client.upsert(COLLECTION_NAME, {
       points: [
         {
@@ -83,9 +108,9 @@ async function saveToQdrant({
       ],
     });
 
-    log.info("Vector saved", { id, file_name, chunk: metadata.chunk_index });
+    log.info("✅ Vector saved", { id, file_name: file_name });
   } catch (err) {
-    log.error("Failed to upsert vector", { message: err.message });
+    log.error("❌ Failed to upsert vector", { message: err.message });
     throw err;
   }
 }

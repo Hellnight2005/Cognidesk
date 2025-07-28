@@ -82,24 +82,24 @@ async function generateEmbedding(text, retries = 3) {
 
 async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
   const fileName = path.basename(fullFilePath);
-  console.log(`\n🚀 Starting embedding process for: ${fileName}`);
+  console.log(`\n🚀 Starting embedding for: ${fileName}`);
 
   await ensureCollection();
 
   if (!fs.existsSync(fullFilePath)) {
-    console.error(`❌ File does not exist: ${fileName}`);
+    console.error(`❌ File not found: ${fileName}`);
     return;
   }
 
   const targetPath = path.join(EMBEDDING_DIR, fileName);
   if (fs.existsSync(targetPath)) {
-    console.warn(`⏭️ Skipping ${fileName} (already embedded)`);
+    console.warn(`⏭️ Skipped (already embedded): ${fileName}`);
     return;
   }
 
   const rawText = fs.readFileSync(fullFilePath, "utf-8");
   if (!rawText || rawText.trim().length < 10) {
-    console.warn(`⚠️ File is empty or too short: ${fileName}`);
+    console.warn(`⚠️ File is too short or empty: ${fileName}`);
     return;
   }
 
@@ -107,21 +107,20 @@ async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
   const chunks = chunkText(cleanedText);
   const metadata = extractMetadata(cleanedText);
 
-  console.log(`🧠 Embedding ${chunks.length} chunks...`);
+  console.log(`🧠 Embedding ${chunks.length} text chunks...`);
 
   let successCount = 0;
   for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const vector = await generateEmbedding(chunk);
+    const vector = await generateEmbedding(chunks[i]);
     if (!vector) continue;
 
     try {
       await saveToQdrant({
-        idea_id: idea_id,
-        user_id: user_id,
+        idea_id,
+        user_id,
         file_name: fileName,
         vector,
-        original_text: chunk,
+        original_text: chunks[i],
         metadata: {
           chunk_index: i,
           source: "converted-file",
@@ -129,8 +128,8 @@ async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
         },
       });
       successCount++;
-    } catch (err) {
-      console.error(`❌ Failed to save chunk ${i}:`, err.message);
+    } catch (_) {
+      // Silent fail for individual chunk
     }
   }
 
@@ -140,18 +139,16 @@ async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
       { optimizer_config: { indexing_threshold: 1 } },
       { headers: { "Content-Type": "application/json" } }
     );
-  } catch (err) {
-    console.error(
-      "❌ Optimizer config failed:",
-      err.response?.data || err.message
-    );
+  } catch (_) {
+    // Silent fail for optimizer config
   }
 
-  console.log(`🎉 Completed embedding for ${fileName}`);
-  console.log(`📌 Saved ${successCount}/${chunks.length} chunks to Qdrant.`);
+  console.log(
+    `✅ Embedded and saved ${successCount}/${chunks.length} chunks for: ${fileName}`
+  );
 
   fs.unlinkSync(fullFilePath);
-  console.log(`🗑️ Deleted original file: ${fileName}\n`);
+  console.log(`🗑️ Removed source file: ${fileName}\n`);
 }
 
 module.exports = embedTextFileAndSave;
