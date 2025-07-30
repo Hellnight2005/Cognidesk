@@ -7,21 +7,17 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const uploadToDrive = require("../middlewares/uploadToDrive");
 
-router.post(
-  "/",
-  upload.array("files"), // Files in form-data
-  ideaController.createIdea
-);
+router.post("/", upload.array("files"), ideaController.createIdea);
 
 router.delete("/:id", ideaController.deleteIdea);
+router.put("/:id", ideaController.updateIdea);
+router.put("/:id/convert", ideaController.updateConvertToProjectField);
 
-// Basic CRUD
-// router.get("/", ideaController.getAllIdeas);
-// router.get("/:id", ideaController.getIdeaById);
-// router.put("/:id", ideaController.updateIdea);
-// router.delete("/:id", ideaController.deleteIdea);
+// 🧠 Move these BEFORE "/:id"
+router.get("/analytics", ideaController.getIdeasAnalytics);
+router.get("/:id/analytics", ideaController.getAllIdeasAnalyticsAverages);
 
-// // Analytics
-// router.get("/:id/summary", ideaController.getIdeaSummary);
+// 🚨 Always keep this one last
+router.get("/:id", ideaController.getIdeaById);
 
 module.exports = router;

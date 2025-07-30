@@ -29,17 +29,25 @@ const FileSchema = new Schema(
 const ReferenceSchema = new Schema(
   {
     label: { type: String, default: "Reference" },
-    url: { type: String, required: false }, // ⬅️ Make `url` optional
+    url: { type: String, required: false },
+    date: { type: Date, default: Date.now },
   },
   { _id: false }
 );
 
+const NoteSchema = new mongoose.Schema(
+  {
+    date: { type: Date, default: Date.now },
+    note: { type: String, required: true },
+  },
+  { _id: false }
+);
 const IdeaSchema = new Schema(
   {
     idea_title: { type: String, required: true },
     idea_description: { type: String, required: true },
     category: { type: String, required: true },
-    sub_category: { type: String, default: null },
+    sub_category: { type: [String], default: [] },
 
     curiosity_level: {
       type: String,
@@ -49,7 +57,7 @@ const IdeaSchema = new Schema(
     },
     convert_to_project: { type: Boolean, default: false },
     priority_reason: { type: String, default: null },
-    source: { type: String, default: null },
+    source: { type: [String], default: [] },
     tags: { type: [String], default: [] },
 
     external_references: {
@@ -78,8 +86,11 @@ const IdeaSchema = new Schema(
 
     fun_rating: { type: Number, min: 1, max: 5, default: null },
     usefulness_rating: { type: Number, min: 1, max: 5, default: null },
-    risks_or_challenges: { type: String, default: null },
-    notes_on_progress: { type: String, default: null },
+    risks_or_challenges: {
+      type: [NoteSchema],
+      default: [],
+    },
+    notes_on_progress: { type: [NoteSchema], default: [] },
 
     file_status: {
       type: String,

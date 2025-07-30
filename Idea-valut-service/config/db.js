@@ -19,7 +19,7 @@ const connectDB = async () => {
       await Promise.all([
         startDriveConsumer(), // Group A - uploads to drive
 
-        startEmbeddingConsumer(), // Group B - embeds to vector DB
+        // startEmbeddingConsumer(), // Group B - embeds to vector DB
       ]);
       console.log("🔄 Kafka consumers started");
     } catch (err) {
