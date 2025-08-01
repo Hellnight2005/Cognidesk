@@ -1,9 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const { createRepo } = require("../controllers/activeProject");
+const { createRepo, fetchRepos } = require("../controllers/activeProject");
 
 // // 1. Get all repos
-// router.get("/repos", activeProjectController.getAllRepos);
+router.get("/repos", fetchRepos); // Assuming fetchAllRepos is defined in activeProjectController
 
 // // 2. Get a specific repo by name
 // router.get("/repos/:name", activeProjectController.getRepoByName);

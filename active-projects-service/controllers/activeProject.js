@@ -128,6 +128,60 @@ async function createRepo(req, res) {
   }
 }
 
+async function fetchRepos(req, res) {
+  const userId = req.body.userId || req.query.userId;
+
+  const search = req.query.search?.toLowerCase() || "";
+
+  const user = await getUserById(userId);
+
+  if (!user || !user.auth?.providers?.github?.access_token) {
+    return res.status(401).json({ error: "GitHub token missing" });
+  }
+
+  const token = user.auth.providers.github.access_token;
+  const octokit = new Octokit({ auth: token });
+
+  try {
+    // Fetch most recent 100 user repos
+    const { data: repos } = await octokit.request("GET /user/repos", {
+      per_page: 100,
+      sort: "updated",
+    });
+
+    // Filter by search
+    const filtered = repos.filter((repo) =>
+      repo.name.toLowerCase().includes(search)
+    );
+
+    // Get existing project repo IDs
+    const existing = await ActiveProject.find({
+      "code_repositories.github_repo_id": { $in: filtered.map((r) => r.id) },
+    });
+
+    const existingRepoIds = new Set(
+      existing.flatMap((project) =>
+        project.code_repositories.map((r) => r.github_repo_id)
+      )
+    );
+
+    const result = filtered.map((repo) => ({
+      github_repo_id: repo.id,
+      name: repo.name,
+      full_name: repo.full_name,
+      html_url: repo.html_url,
+      description: repo.description,
+      isAlreadyInDB: existingRepoIds.has(repo.id),
+    }));
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Error searching repos:", error);
+    return res.status(500).json({ error: "GitHub fetch failed" });
+  }
+}
+
 module.exports = {
   createRepo,
+  fetchRepos,
 };
