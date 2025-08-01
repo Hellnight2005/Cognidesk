@@ -79,11 +79,11 @@ const SettingsSchema = new Schema(
 // 🧠 Knowledge Tracking (curiosities removed)
 const KnowledgeSchema = new Schema(
   {
-    idea_vault: [{ type: Schema.Types.ObjectId, ref: "IdeaVault" }],
-    active_projects: [{ type: Schema.Types.ObjectId, ref: "Project" }],
-    retired_projects: [{ type: Schema.Types.ObjectId, ref: "Project" }],
-    weekly_routines: [{ type: Schema.Types.ObjectId, ref: "Routine" }],
-    mini_missions: [{ type: Schema.Types.ObjectId, ref: "Mission" }],
+    idea_vault: [{ type: Schema.Types.ObjectId, ref: "Idea" }],
+    active_projects: [{ type: Schema.Types.ObjectId, ref: "ActiveProject" }],
+    retired_projects: [{ type: Schema.Types.ObjectId, ref: "ActiveProject" }],
+    // weekly_routines: [{ type: Schema.Types.ObjectId, ref: "Routine" }],
+    // mini_missions: [{ type: Schema.Types.ObjectId, ref: "Mission" }],
   },
   { _id: false }
 );
