@@ -111,7 +111,7 @@ passport.use(
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
       callbackURL: process.env.GITHUB_CALLBACK_URL,
       passReqToCallback: true,
-      scope: ["user:email", "repo"],
+      scope: ["user:email", "repo", "delete_repo"],
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {

@@ -181,7 +181,353 @@ async function fetchRepos(req, res) {
   }
 }
 
+async function changeRepoVisibility(req, res) {
+  const { userId, github_repo_id, make_private } = req.body;
+
+  if (!userId || github_repo_id == null || make_private == null) {
+    return res.status(400).json({
+      message: "Missing userId, github_repo_id, or make_private flag",
+    });
+  }
+
+  try {
+    const user = await getUserById(userId);
+    if (!user || !user.auth?.providers?.github?.access_token) {
+      return res.status(403).json({ message: "GitHub access token missing" });
+    }
+
+    const githubToken = user.auth.providers.github.access_token;
+    const octokit = new Octokit({ auth: githubToken });
+
+    // 1. Find the repo by ID in DB to get full_name
+    const project = await ActiveProject.findOne({
+      "code_repositories.github_repo_id": github_repo_id,
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: "Repo not found in project DB" });
+    }
+
+    const repoInfo = project.code_repositories.find(
+      (r) => r.github_repo_id === github_repo_id
+    );
+
+    if (!repoInfo) {
+      return res.status(404).json({ message: "Repo info not found" });
+    }
+
+    const [owner, repo] = repoInfo.full_name.split("/");
+
+    // 2. Get the actual current visibility from GitHub
+    const { data: repoData } = await octokit.repos.get({
+      owner,
+      repo,
+    });
+
+    const currentVisibility = repoData.private ? "private" : "public";
+    const targetVisibility = make_private ? "private" : "public";
+
+    if (currentVisibility === targetVisibility) {
+      return res.status(400).json({
+        message: `Repo is already ${currentVisibility}. No changes made.`,
+      });
+    }
+
+    // 3. Update visibility on GitHub
+    await octokit.repos.update({
+      owner,
+      repo,
+      private: make_private,
+    });
+
+    // 4. Update visibility in MongoDB
+    await ActiveProject.updateOne(
+      { "code_repositories.github_repo_id": github_repo_id },
+      {
+        $set: {
+          "code_repositories.$.visibility": targetVisibility,
+        },
+      }
+    );
+
+    return res.status(200).json({
+      message: `Repository visibility changed to ${targetVisibility}`,
+    });
+  } catch (err) {
+    console.error("❌ Error changing visibility:", err);
+    return res.status(500).json({
+      message: "Failed to update repo visibility",
+      error: err.message,
+    });
+  }
+}
+
+async function getSpecificRepoAnalysis(req, res) {
+  const { userId, githubRepoId } = req.query;
+
+  if (!userId || !githubRepoId) {
+    return res
+      .status(400)
+      .json({ error: "userId and githubRepoId are required." });
+  }
+
+  try {
+    const project = await ActiveProject.findOne({
+      created_by_user_id: userId,
+      "code_repositories.github_repo_id": parseInt(githubRepoId),
+    });
+
+    if (!project) {
+      return res
+        .status(404)
+        .json({ error: "Repository not found for this user." });
+    }
+
+    const repo = project.code_repositories.find(
+      (r) => r.github_repo_id === parseInt(githubRepoId)
+    );
+
+    if (!repo) {
+      return res
+        .status(404)
+        .json({ error: "Specific repo not found in project." });
+    }
+
+    return res.json({
+      repo_name: repo.name,
+      full_name: repo.full_name,
+      stats: project.github_stats,
+      code_repositories: project.code_repositories.map((r) => ({
+        github_repo_id: r.github_repo_id,
+        visibility: r.visibility,
+        default_branch: r.default_branch,
+        created_at: r.created_at,
+        has_issues: r.has_issues,
+        open_issues_count: r.open_issues_count,
+        forks_count: r.forks_count,
+        watchers_count: r.watchers_count,
+        stargazers_count: r.stargazers_count,
+        open_issues: r.open_issues,
+        watchers: r.watchers,
+        deployments_url: r.deployments_url,
+        topics: r.topics,
+      })),
+      priority: project.priority,
+      deadline: project.deadline,
+      tags: project.tags,
+    });
+  } catch (error) {
+    console.error("Error in getSpecificRepoAnalysis:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+}
+
+async function getAllRepoAnalysis(req, res) {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required." });
+  }
+
+  try {
+    const projects = await ActiveProject.find({ created_by_user_id: userId });
+
+    if (!projects || projects.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No projects found for this user." });
+    }
+
+    const allRepos = [];
+    const allStats = [];
+
+    projects.forEach((project) => {
+      project.code_repositories.forEach((repo) => {
+        allRepos.push({
+          repo_name: repo.name,
+          full_name: repo.full_name,
+          github_repo_id: repo.github_repo_id,
+          stats: project.github_stats || {},
+          project_status: project.status,
+          goal: project.goal,
+          priority: project.priority,
+          deadline: project.deadline,
+          tags: project.tags,
+        });
+
+        if (project.github_stats) {
+          allStats.push(project.github_stats);
+        }
+      });
+    });
+
+    // Compute averages for all numeric github_stats fields
+    const statSums = {};
+    const statCounts = {};
+
+    allStats.forEach((stats) => {
+      Object.entries(stats).forEach(([key, value]) => {
+        if (typeof value === "number") {
+          statSums[key] = (statSums[key] || 0) + value;
+          statCounts[key] = (statCounts[key] || 0) + 1;
+        }
+      });
+    });
+
+    const avgStats = {};
+    Object.entries(statSums).forEach(([key, sum]) => {
+      avgStats[key] = +(sum / statCounts[key]).toFixed(2);
+    });
+
+    return res.json({
+      total_repos: allRepos.length,
+      average_stats: avgStats,
+      repositories: allRepos,
+    });
+  } catch (error) {
+    console.error("Error in getAllRepoAnalysis:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+}
+
+async function updateRepo(req, res) {
+  const { userId, repoId } = req.body;
+  const { goal, priority, status, new_tags = [] } = req.body;
+
+  if (!userId || !repoId) {
+    return res.status(400).json({ error: "userId and repoId are required." });
+  }
+
+  try {
+    const repo = await ActiveProject.findOne({
+      created_by_user_id: userId,
+      "code_repositories.github_repo_id": parseInt(repoId),
+    });
+
+    if (!repo) {
+      return res.status(404).json({ error: "Repository not found." });
+    }
+
+    // Only update these fields
+    if (goal !== undefined) repo.goal = goal;
+    if (priority !== undefined) repo.priority = priority;
+    if (status !== undefined) repo.status = status;
+
+    // Add new tags (without duplication)
+    if (Array.isArray(new_tags) && new_tags.length > 0) {
+      const currentTags = new Set(repo.tags || []);
+      new_tags.forEach((tag) => currentTags.add(tag));
+      repo.tags = Array.from(currentTags);
+    }
+
+    await repo.save();
+
+    return res.status(200).json({
+      message: "Repository updated successfully.",
+      updatedRepo: repo,
+    });
+  } catch (error) {
+    console.error("Update Repo Error:", error);
+    return res.status(500).json({ error: "Server error." });
+  }
+}
+
+async function syncGithubRepoToDB(req, res) {
+  const { userId, repoId } = req.body;
+
+  try {
+    const user = await getUserById(userId);
+    const accessToken = user?.auth?.providers?.github?.access_token;
+    if (!accessToken) {
+      return res.status(403).json({ error: "No GitHub access token" });
+    }
+
+    const project = await ActiveProject.findOne({
+      "code_repositories.github_repo_id": repoId,
+      created_by_user_id: userId,
+    });
+
+    if (!project) {
+      return res
+        .status(404)
+        .json({ error: "Project not found or unauthorized" });
+    }
+
+    const repoInfo = project.code_repositories.find(
+      (r) => r.github_repo_id === repoId
+    );
+    if (!repoInfo || !repoInfo.full_name) {
+      return res.status(400).json({ error: "Repo info missing" });
+    }
+
+    const [owner, repo] = repoInfo.full_name.split("/");
+    const octokit = new Octokit({ auth: accessToken });
+
+    // ✅ Fetch latest repo metadata
+    const [repoRes, commitsRes] = await Promise.all([
+      octokit.rest.repos.get({ owner, repo }),
+      octokit.rest.repos.listCommits({ owner, repo, per_page: 2 }),
+    ]);
+
+    const updatedRepo = repoRes.data;
+    const commits = commitsRes.data;
+
+    // ✅ Format commits based on schema
+    const formattedCommits = commits.map((c) => ({
+      commit_message: c.commit.message,
+      committed_at: new Date(c.commit.author.date),
+      author_name: c.commit.author.name,
+      author_username: c.author?.login || null,
+      commit_url: c.html_url,
+    }));
+
+    // ✅ Update repo fields
+    Object.assign(repoInfo, {
+      name: updatedRepo.name,
+      full_name: updatedRepo.full_name,
+      html_url: updatedRepo.html_url,
+      clone_url: updatedRepo.clone_url,
+      visibility: updatedRepo.visibility,
+      default_branch: updatedRepo.default_branch,
+      updated_at: updatedRepo.updated_at,
+      created_at: updatedRepo.created_at,
+      has_issues: updatedRepo.has_issues,
+      has_projects: updatedRepo.has_projects,
+      open_issues_count: updatedRepo.open_issues_count,
+      forks_count: updatedRepo.forks_count,
+      watchers_count: updatedRepo.watchers_count,
+      stargazers_count: updatedRepo.stargazers_count,
+      deployments_url: updatedRepo.deployments_url,
+      topics: updatedRepo.topics || [],
+    });
+
+    // ✅ Update GitHub stats at project level
+    project.github_stats.last_commits = formattedCommits;
+    project.github_stats.last_commit_date =
+      formattedCommits[0]?.committed_at || null;
+    project.github_stats.total_commits += formattedCommits.length;
+    project.github_stats.forks = updatedRepo.forks_count;
+    project.github_stats.stars = updatedRepo.stargazers_count;
+
+    await project.save();
+
+    return res.status(200).json({
+      message: "Repository and commits synced successfully.",
+      repo: repoInfo,
+      last_commits: formattedCommits,
+    });
+  } catch (error) {
+    console.error("GitHub sync failed:", error);
+    return res.status(500).json({ error: "Failed to sync GitHub repository." });
+  }
+}
+
 module.exports = {
   createRepo,
   fetchRepos,
+  changeRepoVisibility,
+  getSpecificRepoAnalysis,
+  getAllRepoAnalysis,
+  updateRepo,
+  syncGithubRepoToDB,
 };
