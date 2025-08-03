@@ -417,7 +417,7 @@ async function getAllRepoAnalysis(req, res) {
   const { userId } = req.query;
 
   if (!userId) {
-    return res.status(400).json({ error: "userId is required." });
+    return res.status(400).json({ error: "userId is required" });
   }
 
   try {
