@@ -10,9 +10,10 @@ const {
 } = require("../services/user-services");
 const { Octokit } = require("@octokit/rest");
 
+// done
 async function createRepo(req, res) {
   const {
-    name,
+    title,
     goal,
     description,
     deadline,
@@ -21,10 +22,11 @@ async function createRepo(req, res) {
     collaborators = [],
     is_private = false,
     origin_idea = null,
+    priority = "Medium",
   } = req.body;
 
-  if (!name || !created_by_user_id) {
-    return res.status(400).json({ message: "Name and user ID are required" });
+  if (!title || !created_by_user_id) {
+    return res.status(400).json({ message: "title and user ID are required" });
   }
 
   try {
@@ -32,84 +34,174 @@ async function createRepo(req, res) {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const githubToken = user.auth?.providers?.github?.access_token;
-    if (!githubToken)
+    if (!githubToken) {
       return res.status(403).json({ message: "GitHub access token missing" });
+    }
 
     const octokit = new Octokit({ auth: githubToken });
-    const repoDescription = description || `Project repo for: ${name}`;
+    const repoDescription = description || `Project repo for: ${title}`;
 
     // 1. Create GitHub repo
     const githubRes = await octokit.repos.createForAuthenticatedUser({
-      name,
+      name: title,
       description: repoDescription,
       private: is_private,
       auto_init: true,
     });
 
     const repo = githubRes.data;
+    const repoName = repo.name;
+    const owner = repo.owner.login;
     const repoCreatedDate = new Date(repo.created_at);
 
     // 2. Add collaborators
     for (const collab of collaborators) {
       if (collab.username && collab.role) {
         await octokit.repos.addCollaborator({
-          owner: repo.owner.login,
-          repo: repo.name,
+          owner,
+          repo: repoName,
           username: collab.username,
           permission: collab.role === "admin" ? "admin" : collab.role,
         });
       }
     }
 
-    // 3. Fetch repo topics
-    const topicsRes = await octokit.repos.getAllTopics({
-      owner: repo.owner.login,
-      repo: repo.name,
-    });
+    // 3. Fetch topics
+    let topics = [];
+    try {
+      const topicsRes = await octokit.repos.getAllTopics({
+        owner,
+        repo: repoName,
+      });
+      topics = topicsRes.data.names || [];
+    } catch {
+      console.warn("⚠️ Unable to fetch topics.");
+    }
 
-    // 4. Calculate fallback deadline
+    // 4. Fetch languages
+    let allLanguages = {};
+    let mostUsedLanguage = "Unknown";
+    try {
+      const langRes = await octokit.repos.listLanguages({
+        owner,
+        repo: repoName,
+      });
+      allLanguages = langRes.data || {};
+      const sorted = Object.entries(allLanguages).sort((a, b) => b[1] - a[1]);
+      if (sorted.length > 0) mostUsedLanguage = sorted[0][0];
+    } catch {
+      console.warn("⚠️ No languages found.");
+    }
+
+    // 5. Fetch last 2 commits
+    let last_commits = [];
+    try {
+      const commitsRes = await octokit.repos.listCommits({
+        owner,
+        repo: repoName,
+        per_page: 2,
+      });
+
+      const rawCommits = commitsRes.data || [];
+
+      last_commits = rawCommits
+        .filter((commit) => commit?.commit)
+        .map((commit) => {
+          const commitData = commit.commit;
+          const authorInfo = commitData.author || {};
+          const githubAuthor = commit.author || {};
+
+          return {
+            commit_message: commitData.message || "No commit message",
+            commit_url: commit.html_url || null,
+            author_name: authorInfo.name || githubAuthor.login || "Unknown",
+            author_username: githubAuthor.login || null,
+            committed_at: authorInfo.date
+              ? new Date(authorInfo.date)
+              : new Date(),
+          };
+        });
+    } catch (err) {
+      console.warn(
+        `⚠️ No commits found or error occurred for repo: ${repoName}`,
+        err.message
+      );
+    }
+
+    // Fallback commits if empty
+    if (last_commits.length < 2) {
+      const fallbackCommit = {
+        commit_message: "Initial commit",
+        commit_url: repo.html_url,
+        author_name: user.name || "Unknown",
+        author_username: user.username || "unknown",
+        committed_at: new Date(),
+      };
+      while (last_commits.length < 2) {
+        last_commits.push(fallbackCommit);
+      }
+    }
+
+    // 6. Get branches
+    let branches = [];
+    try {
+      const branchRes = await octokit.repos.listBranches({
+        owner,
+        repo: repoName,
+      });
+      branches = branchRes.data.map((b) => b.name);
+    } catch {
+      branches = ["main"];
+    }
+
+    // 7. Create project
     const resolvedDeadline = deadline
       ? new Date(deadline)
-      : new Date(repoCreatedDate.getTime() + 90 * 24 * 60 * 60 * 1000); // +90 days
+      : new Date(repoCreatedDate.getTime() + 90 * 24 * 60 * 60 * 1000);
 
-    // 5. Save ActiveProject
     const project = await ActiveProject.create({
-      name,
-      goal,
-      description: repoDescription,
-      status: "Planning",
-      start_date: repoCreatedDate,
-      deadline: resolvedDeadline,
-      tags,
       created_by_user_id,
       origin_idea,
+      title,
+      description: repoDescription,
+      start_date: repoCreatedDate,
+      deadline: resolvedDeadline,
+      status: "Planning",
+      priority,
       code_repositories: [
         {
-          github_repo_id: repo.id,
-          name: repo.name,
-          full_name: repo.full_name,
-          html_url: repo.html_url,
-          clone_url: repo.clone_url,
-          visibility: repo.visibility,
-          default_branch: repo.default_branch,
-          created_at: new Date(repo.created_at),
-          updated_at: new Date(repo.updated_at),
-          has_issues: repo.has_issues,
-          has_projects: repo.has_projects,
-          open_issues_count: repo.open_issues_count,
-          forks_count: repo.forks_count,
-          watchers_count: repo.watchers_count,
-          stargazers_count: repo.stargazers_count,
-          open_issues: repo.open_issues,
-          watchers: repo.watchers,
-          deployments_url: repo.deployments_url,
-          topics: topicsRes.data.names || [],
-          collaborators, // assume you're passing collaborator schema-compatible data
+          repo_id: repo.id,
+          repo_name: repoName,
+          repo_url: repo.html_url,
+          description: repoDescription,
+          primary_language: mostUsedLanguage,
+          languages: allLanguages,
+          branches,
+          github_stats: {
+            stars: repo.stargazers_count || 0,
+            forks: repo.forks_count || 0,
+            watchers: repo.watchers_count || 0,
+            open_issues: repo.open_issues_count || 0,
+            total_commits: last_commits.length,
+            last_commit_date: last_commits[0]?.committed_at || null,
+            last_commits,
+            exploration_count: 0,
+            progress_percent: 0,
+          },
         },
       ],
+      github_stats_summary: {
+        total_repos: 1,
+        average_commits: last_commits.length,
+        average_stars: repo.stargazers_count || 0,
+        average_forks: repo.forks_count || 0,
+        average_watchers: repo.watchers_count || 0,
+        average_issues: repo.open_issues_count || 0,
+        most_used_language: mostUsedLanguage,
+        all_languages: allLanguages,
+      },
     });
 
-    // 6. Link project to user
     await addActiveProjectToUser({
       userId: created_by_user_id,
       projectId: project._id,
@@ -151,24 +243,24 @@ async function fetchRepos(req, res) {
 
     // Filter by search
     const filtered = repos.filter((repo) =>
-      repo.name.toLowerCase().includes(search)
+      repo.title.toLowerCase().includes(search)
     );
 
     // Get existing project repo IDs
     const existing = await ActiveProject.find({
-      "code_repositories.github_repo_id": { $in: filtered.map((r) => r.id) },
+      "code_repositories.repo_id": { $in: filtered.map((r) => r.id) },
     });
 
     const existingRepoIds = new Set(
       existing.flatMap((project) =>
-        project.code_repositories.map((r) => r.github_repo_id)
+        project.code_repositories.map((r) => r.repo_id)
       )
     );
 
     const result = filtered.map((repo) => ({
-      github_repo_id: repo.id,
-      name: repo.name,
-      full_name: repo.full_name,
+      repo_id: repo.id,
+      title: repo.title,
+      full_title: repo.full_title,
       html_url: repo.html_url,
       description: repo.description,
       isAlreadyInDB: existingRepoIds.has(repo.id),
@@ -181,12 +273,13 @@ async function fetchRepos(req, res) {
   }
 }
 
+// done
 async function changeRepoVisibility(req, res) {
-  const { userId, github_repo_id, make_private } = req.body;
+  const { userId, repo_id, make_private } = req.body;
 
-  if (!userId || github_repo_id == null || make_private == null) {
+  if (!userId || repo_id == null || make_private == null) {
     return res.status(400).json({
-      message: "Missing userId, github_repo_id, or make_private flag",
+      message: "Missing userId, repo_id, or make_private flag",
     });
   }
 
@@ -199,50 +292,48 @@ async function changeRepoVisibility(req, res) {
     const githubToken = user.auth.providers.github.access_token;
     const octokit = new Octokit({ auth: githubToken });
 
-    // 1. Find the repo by ID in DB to get full_name
+    // Step 1: Find the repo entry
     const project = await ActiveProject.findOne({
-      "code_repositories.github_repo_id": github_repo_id,
+      "code_repositories.repo_id": repo_id,
     });
 
     if (!project) {
-      return res.status(404).json({ message: "Repo not found in project DB" });
+      return res.status(404).json({ message: "Repo not found in DB" });
     }
 
     const repoInfo = project.code_repositories.find(
-      (r) => r.github_repo_id === github_repo_id
+      (r) => r.repo_id === repo_id
     );
 
     if (!repoInfo) {
-      return res.status(404).json({ message: "Repo info not found" });
+      return res.status(404).json({ message: "Repo info missing" });
     }
 
-    const [owner, repo] = repoInfo.full_name.split("/");
+    const [owner, repo] = repoInfo.repo_url
+      .replace("https://github.com/", "")
+      .split("/");
 
-    // 2. Get the actual current visibility from GitHub
-    const { data: repoData } = await octokit.repos.get({
-      owner,
-      repo,
-    });
-
+    // Step 2: Check current visibility
+    const { data: repoData } = await octokit.repos.get({ owner, repo });
     const currentVisibility = repoData.private ? "private" : "public";
     const targetVisibility = make_private ? "private" : "public";
 
     if (currentVisibility === targetVisibility) {
       return res.status(400).json({
-        message: `Repo is already ${currentVisibility}. No changes made.`,
+        message: `Repo already ${currentVisibility}. No update needed.`,
       });
     }
 
-    // 3. Update visibility on GitHub
+    // Step 3: Update on GitHub
     await octokit.repos.update({
       owner,
       repo,
       private: make_private,
     });
 
-    // 4. Update visibility in MongoDB
+    // Step 4: Update in MongoDB
     await ActiveProject.updateOne(
-      { "code_repositories.github_repo_id": github_repo_id },
+      { "code_repositories.repo_id": repo_id },
       {
         $set: {
           "code_repositories.$.visibility": targetVisibility,
@@ -251,12 +342,12 @@ async function changeRepoVisibility(req, res) {
     );
 
     return res.status(200).json({
-      message: `Repository visibility changed to ${targetVisibility}`,
+      message: `Repository visibility updated to ${targetVisibility}`,
     });
   } catch (err) {
     console.error("❌ Error changing visibility:", err);
     return res.status(500).json({
-      message: "Failed to update repo visibility",
+      message: "Failed to update repository visibility",
       error: err.message,
     });
   }
@@ -274,7 +365,7 @@ async function getSpecificRepoAnalysis(req, res) {
   try {
     const project = await ActiveProject.findOne({
       created_by_user_id: userId,
-      "code_repositories.github_repo_id": parseInt(githubRepoId),
+      "code_repositories.repo_id": parseInt(githubRepoId),
     });
 
     if (!project) {
@@ -284,7 +375,7 @@ async function getSpecificRepoAnalysis(req, res) {
     }
 
     const repo = project.code_repositories.find(
-      (r) => r.github_repo_id === parseInt(githubRepoId)
+      (r) => r.repo_id === parseInt(githubRepoId)
     );
 
     if (!repo) {
@@ -294,11 +385,11 @@ async function getSpecificRepoAnalysis(req, res) {
     }
 
     return res.json({
-      repo_name: repo.name,
-      full_name: repo.full_name,
+      repo_title: repo.title,
+      full_title: repo.full_title,
       stats: project.github_stats,
       code_repositories: project.code_repositories.map((r) => ({
-        github_repo_id: r.github_repo_id,
+        repo_id: r.repo_id,
         visibility: r.visibility,
         default_branch: r.default_branch,
         created_at: r.created_at,
@@ -344,9 +435,9 @@ async function getAllRepoAnalysis(req, res) {
     projects.forEach((project) => {
       project.code_repositories.forEach((repo) => {
         allRepos.push({
-          repo_name: repo.name,
-          full_name: repo.full_name,
-          github_repo_id: repo.github_repo_id,
+          repo_title: repo.title,
+          full_title: repo.full_title,
+          repo_id: repo.repo_id,
           stats: project.github_stats || {},
           project_status: project.status,
           goal: project.goal,
@@ -401,7 +492,7 @@ async function updateRepo(req, res) {
   try {
     const repo = await ActiveProject.findOne({
       created_by_user_id: userId,
-      "code_repositories.github_repo_id": parseInt(repoId),
+      "code_repositories.repo_id": parseInt(repoId),
     });
 
     if (!repo) {
@@ -432,6 +523,7 @@ async function updateRepo(req, res) {
   }
 }
 
+// done
 async function syncGithubRepoToDB(req, res) {
   const { userId, repoId } = req.body;
 
@@ -443,7 +535,7 @@ async function syncGithubRepoToDB(req, res) {
     }
 
     const project = await ActiveProject.findOne({
-      "code_repositories.github_repo_id": repoId,
+      "code_repositories.repo_id": repoId,
       created_by_user_id: userId,
     });
 
@@ -454,60 +546,78 @@ async function syncGithubRepoToDB(req, res) {
     }
 
     const repoInfo = project.code_repositories.find(
-      (r) => r.github_repo_id === repoId
+      (r) => r.repo_id === repoId
     );
-    if (!repoInfo || !repoInfo.full_name) {
+    if (!repoInfo || !repoInfo.repo_url) {
       return res.status(400).json({ error: "Repo info missing" });
     }
 
-    const [owner, repo] = repoInfo.full_name.split("/");
+    const [owner, repo] = repoInfo.repo_url
+      .replace("https://github.com/", "")
+      .split("/");
     const octokit = new Octokit({ auth: accessToken });
 
-    // ✅ Fetch latest repo metadata
-    const [repoRes, commitsRes] = await Promise.all([
+    // Fetch metadata, commits, collaborators, languages
+    const [repoRes, commitsRes, languagesRes] = await Promise.all([
       octokit.rest.repos.get({ owner, repo }),
       octokit.rest.repos.listCommits({ owner, repo, per_page: 2 }),
+      octokit.rest.repos.listLanguages({ owner, repo }),
     ]);
 
     const updatedRepo = repoRes.data;
-    const commits = commitsRes.data;
+    const commits = commitsRes.data || [];
 
-    // ✅ Format commits based on schema
+    // Format last_commits to match new model
     const formattedCommits = commits.map((c) => ({
-      commit_message: c.commit.message,
-      committed_at: new Date(c.commit.author.date),
-      author_name: c.commit.author.name,
-      author_username: c.author?.login || null,
-      commit_url: c.html_url,
+      message: c.commit.message,
+      url: c.html_url,
+      date: c.commit.author?.date ? new Date(c.commit.author.date) : null,
+      author: c.commit.author?.name || null,
     }));
 
-    // ✅ Update repo fields
-    Object.assign(repoInfo, {
-      name: updatedRepo.name,
-      full_name: updatedRepo.full_name,
-      html_url: updatedRepo.html_url,
-      clone_url: updatedRepo.clone_url,
-      visibility: updatedRepo.visibility,
-      default_branch: updatedRepo.default_branch,
-      updated_at: updatedRepo.updated_at,
-      created_at: updatedRepo.created_at,
-      has_issues: updatedRepo.has_issues,
-      has_projects: updatedRepo.has_projects,
-      open_issues_count: updatedRepo.open_issues_count,
-      forks_count: updatedRepo.forks_count,
-      watchers_count: updatedRepo.watchers_count,
-      stargazers_count: updatedRepo.stargazers_count,
-      deployments_url: updatedRepo.deployments_url,
-      topics: updatedRepo.topics || [],
-    });
+    // Count total commits using pagination
+    const commitsCountRes = await octokit.request(
+      "GET /repos/{owner}/{repo}/commits",
+      {
+        owner,
+        repo,
+        per_page: 1,
+      }
+    );
 
-    // ✅ Update GitHub stats at project level
-    project.github_stats.last_commits = formattedCommits;
-    project.github_stats.last_commit_date =
-      formattedCommits[0]?.committed_at || null;
-    project.github_stats.total_commits += formattedCommits.length;
-    project.github_stats.forks = updatedRepo.forks_count;
-    project.github_stats.stars = updatedRepo.stargazers_count;
+    let totalCommits = 1;
+    const linkHeader = commitsCountRes.headers.link;
+    if (linkHeader) {
+      const match = linkHeader.match(/&page=(\d+)>; rel="last"/);
+      if (match) {
+        totalCommits = parseInt(match[1], 10);
+      }
+    }
+
+    // Extract branches
+    const branchesRes = await octokit.rest.repos.listBranches({ owner, repo });
+    const branches = branchesRes.data.map((b) => b.name);
+
+    // Assign updated info to the repo object inside the project
+    Object.assign(repoInfo, {
+      repo_name: updatedRepo.name,
+      repo_url: updatedRepo.html_url,
+      description: updatedRepo.description,
+      branches,
+      primary_language: updatedRepo.language || "Unknown",
+      languages: new Map(Object.entries(languagesRes.data || {})),
+      github_stats: {
+        total_commits: totalCommits,
+        last_commit_date: formattedCommits[0]?.date || null,
+        last_commits: formattedCommits,
+        stars: updatedRepo.stargazers_count,
+        forks: updatedRepo.forks_count,
+        watchers: updatedRepo.subscribers_count,
+        open_issues: updatedRepo.open_issues_count,
+        exploration_count: repoInfo.github_stats?.exploration_count || 0,
+        progress_percent: repoInfo.github_stats?.progress_percent || 0,
+      },
+    });
 
     await project.save();
 
@@ -515,12 +625,227 @@ async function syncGithubRepoToDB(req, res) {
       message: "Repository and commits synced successfully.",
       repo: repoInfo,
       last_commits: formattedCommits,
+      github_stats: repoInfo.github_stats,
     });
   } catch (error) {
     console.error("GitHub sync failed:", error);
     return res.status(500).json({ error: "Failed to sync GitHub repository." });
   }
 }
+
+// Done
+async function retireProject(req, res) {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  // Updated: Match all enum values from the new schema
+  const validStatuses = [
+    "Planning",
+    "In Progress",
+    "Review",
+    "Completed",
+    "Paused",
+  ];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({
+      error: `Invalid status. Use one of: ${validStatuses.join(", ")}.`,
+    });
+  }
+
+  try {
+    const updated = await ActiveProject.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    return res.json({
+      message: `Project status updated to '${status}'`,
+      project: updated,
+    });
+  } catch (err) {
+    console.error("Error updating project status:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+}
+
+// Done
+const addRepoToProject = async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const { githubRepos, userId } = req.body;
+    const repoList = Array.isArray(githubRepos) ? githubRepos : [githubRepos];
+
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId." });
+    }
+
+    const user = await getUserById(userId);
+    if (!user || !user.auth?.providers?.github?.access_token) {
+      return res.status(403).json({ error: "GitHub not connected for user." });
+    }
+
+    const githubToken = user.auth.providers.github.access_token;
+    const username = user.auth.providers.github.username;
+
+    if (!username) {
+      return res.status(400).json({ error: "GitHub username is missing." });
+    }
+
+    const octokit = new Octokit({ auth: githubToken });
+    const project = await ActiveProject.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    for (const repoName of repoList) {
+      const { data: repo } = await octokit.repos.get({
+        owner: username,
+        repo: repoName,
+      });
+
+      const alreadyExists = project.code_repositories.some(
+        (r) => r.repo_id === repo.id || r.repo_url === repo.html_url
+      );
+
+      if (alreadyExists) {
+        console.log(`⏩ Repo "${repo.name}" already exists in project.`);
+        continue;
+      }
+
+      const { data: languages } = await octokit.repos.listLanguages({
+        owner: username,
+        repo: repoName,
+      });
+
+      const sortedLanguages = Object.entries(languages || {}).sort(
+        (a, b) => b[1] - a[1]
+      );
+      const mostUsedLanguage = sortedLanguages[0]?.[0] || "Unknown";
+
+      const { data: contributors } = await octokit.repos.listContributors({
+        owner: username,
+        repo: repoName,
+      });
+
+      const totalCommits = contributors.reduce(
+        (sum, contributor) => sum + contributor.contributions,
+        0
+      );
+
+      const { data: commits } = await octokit.repos.listCommits({
+        owner: username,
+        repo: repoName,
+        per_page: 2,
+      });
+
+      const lastCommits = commits.map((commit) => ({
+        message: commit.commit.message,
+        url: commit.html_url,
+        date: new Date(commit.commit.author?.date),
+        author: commit.commit.author?.name || "Unknown",
+      }));
+
+      const newRepo = {
+        repo_id: repo.id,
+        repo_name: repo.name,
+        repo_url: repo.html_url,
+        description: repo.description || "",
+        branches: [],
+        primary_language: repo.language || mostUsedLanguage,
+        languages: languages || {},
+
+        github_stats: {
+          exploration_count: 0,
+          total_commits: totalCommits,
+          last_commit_date: lastCommits[0]?.date || null,
+          progress_percent: 0,
+          stars: repo.stargazers_count || 0,
+          forks: repo.forks_count || 0,
+          watchers: repo.watchers_count || 0,
+          open_issues: repo.open_issues_count || 0,
+          last_commits: lastCommits,
+        },
+
+        visibility: repo.private ? "private" : "public",
+      };
+
+      project.code_repositories.push(newRepo);
+    }
+
+    // ✅ Update project-level github_stats_summary
+    const totalRepos = project.code_repositories.length;
+    let totalCommits = 0;
+    let totalStars = 0;
+    let totalForks = 0;
+    let totalWatchers = 0;
+    let totalOpenIssues = 0;
+
+    const allLanguages = [];
+
+    for (const repo of project.code_repositories) {
+      const stats = repo.github_stats || {};
+      totalCommits += stats.total_commits || 0;
+      totalStars += stats.stars || 0;
+      totalForks += stats.forks || 0;
+      totalWatchers += stats.watchers || 0;
+      totalOpenIssues += stats.open_issues || 0;
+
+      if (repo.languages && typeof repo.languages === "object") {
+        allLanguages.push(repo.languages);
+      }
+    }
+
+    // Combine all language data into one object
+    // Combine all language data into one object
+    const languageByteCount = {};
+    for (const langObj of allLanguages) {
+      for (const [lang, bytes] of Object.entries(langObj)) {
+        languageByteCount[lang] = (languageByteCount[lang] || 0) + bytes;
+        console.log(lang, bytes, languageByteCount[lang]);
+      }
+    }
+    console.log("Language byte count:", languageByteCount);
+
+    // ✅ Safer way to find the top language
+    let mostUsedLanguage = "Unknown";
+    let maxBytes = 0;
+
+    for (const [lang, bytes] of Object.entries(languageByteCount)) {
+      if (bytes > maxBytes) {
+        maxBytes = bytes;
+        mostUsedLanguage = lang;
+      }
+    }
+    console.log("Most used language:", mostUsedLanguage);
+
+    project.github_stats_summary = {
+      total_repos: totalRepos,
+      average_commits: totalRepos ? Math.round(totalCommits / totalRepos) : 0,
+      average_stars: totalRepos ? Math.round(totalStars / totalRepos) : 0,
+      average_forks: totalRepos ? Math.round(totalForks / totalRepos) : 0,
+      average_watchers: totalRepos ? Math.round(totalWatchers / totalRepos) : 0,
+      average_issues: totalRepos ? Math.round(totalOpenIssues / totalRepos) : 0,
+    };
+
+    await project.save();
+
+    return res.status(200).json({
+      message: "Repositories added successfully",
+      updatedProject: project,
+    });
+  } catch (error) {
+    console.error("❌ Error adding repo to project:", error.message);
+    return res.status(500).json({
+      message: "Failed to add GitHub repo to project",
+      error: error.message,
+    });
+  }
+};
 
 module.exports = {
   createRepo,
@@ -530,4 +855,6 @@ module.exports = {
   getAllRepoAnalysis,
   updateRepo,
   syncGithubRepoToDB,
+  retireProject,
+  addRepoToProject,
 };

@@ -8,6 +8,8 @@ const {
   getAllRepoAnalysis,
   updateRepo,
   syncGithubRepoToDB,
+  retireProject,
+  addRepoToProject,
 } = require("../controllers/activeProject");
 
 // // 2. Get a specific repo by name
@@ -25,9 +27,13 @@ router.get("/analysis", getAllRepoAnalysis);
 // // 8. Get analysis of a specific repo
 router.get("/analysis", getSpecificRepoAnalysis);
 
-// // 9. Get most active repos
-// router.get("/repos/most-active", activeProjectController.getMostActiveRepos);
 router.post("/sync-github-repo", syncGithubRepoToDB);
+
 // // 4. Update a repo by ID or name
 router.post("/update-repo", updateRepo); // identifier = ID or name
+
+router.post("/repo/:id", retireProject);
+
+router.put("/repo/:id", addRepoToProject); // Assuming retireProject is defined in activeProjectController
+
 module.exports = router;

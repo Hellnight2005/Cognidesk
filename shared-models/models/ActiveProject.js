@@ -1,29 +1,32 @@
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
-// Collaborator Subschema
-const CollaboratorSchema = new Schema(
+// Last Commit Subschema
+const LastCommitSchema = new Schema(
   {
-    username: { type: String, required: true },
-    profile_url: { type: String },
-    avatar_url: { type: String },
-    role: {
-      type: String,
-      enum: ["admin", "write", "read"],
-      default: "read",
-    },
+    message: String,
+    url: String,
+    date: Date,
+    author: String,
   },
   { _id: false }
 );
 
-// Last Commit Subschema
-const LastCommitSchema = new Schema(
+// GitHub Stats for Each Repo
+const GitHubStatsSchema = new Schema(
   {
-    commit_message: { type: String, required: true },
-    committed_at: { type: Date, required: true },
-    author_name: { type: String },
-    author_username: { type: String },
-    commit_url: { type: String },
+    exploration_count: { type: Number, default: 0 },
+    total_commits: { type: Number, default: 0 },
+    last_commit_date: { type: Date },
+    progress_percent: { type: Number, min: 0, max: 100 },
+    stars: { type: Number, default: 0 },
+    forks: { type: Number, default: 0 },
+    watchers: { type: Number, default: 0 },
+    open_issues: { type: Number, default: 0 },
+    last_commits: {
+      type: [LastCommitSchema],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -31,50 +34,46 @@ const LastCommitSchema = new Schema(
 // Code Repository Subschema
 const CodeRepoSchema = new Schema(
   {
-    github_repo_id: { type: Number, required: true },
-    name: { type: String, required: true },
-    full_name: { type: String, required: true },
-    html_url: { type: String, required: true },
-    clone_url: { type: String },
-    visibility: {
-      type: String,
-      enum: ["public", "private"],
-      default: "public",
-    },
-    default_branch: { type: String },
-    created_at: { type: Date },
-    updated_at: { type: Date },
-    has_issues: { type: Boolean },
-    has_projects: { type: Boolean },
-    open_issues_count: { type: Number },
-    forks_count: { type: Number },
-    watchers_count: { type: Number },
-    stargazers_count: { type: Number },
-    open_issues: { type: Number },
-    watchers: { type: Number },
-    deployments_url: { type: String },
-    topics: [String],
-    collaborators: [CollaboratorSchema],
+    repo_id: { type: Number, required: true },
+    repo_name: { type: String, required: true },
+    repo_url: { type: String, required: true },
+    description: String,
+    branches: [String], // replaces default_branch
+    primary_language: String,
+    languages: { type: Map, of: Number }, // { JavaScript: 50, Python: 30, ... }
+    github_stats: GitHubStatsSchema,
   },
   { _id: false }
 );
 
-// Main Active Project Schema
+// Average GitHub Stats for Entire Project
+const AverageGitHubStatsSchema = new Schema(
+  {
+    total_repos: { type: Number, default: 0 },
+    average_commits: { type: Number, default: 0 },
+    average_stars: { type: Number, default: 0 },
+    average_forks: { type: Number, default: 0 },
+    average_watchers: { type: Number, default: 0 },
+    average_issues: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+// Active Project Schema
 const ActiveProjectSchema = new Schema(
   {
-    name: { type: String, required: true },
-    goal: { type: String },
+    created_by_user_id: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    origin_idea: {
+      type: Schema.Types.ObjectId,
+      ref: "Idea",
+      required: true,
+    },
+    title: { type: String, required: true },
     description: { type: String },
-    priority: {
-      type: String,
-      enum: ["Low", "Medium", "High", "Critical"],
-      default: "Medium",
-    },
-    status: {
-      type: String,
-      enum: ["Planning", "In Progress", "Review", "Completed", "Paused"],
-      default: "Planning",
-    },
     start_date: { type: Date, default: Date.now },
     deadline: {
       type: Date,
@@ -85,33 +84,22 @@ const ActiveProjectSchema = new Schema(
       },
     },
     completion_date: { type: Date },
-    tags: [String],
 
-    // Relation to original idea
-    origin_idea: {
-      type: Schema.Types.ObjectId,
-      ref: "Idea",
-      required: true,
-    },
-
-    // GitHub Repos
     code_repositories: [CodeRepoSchema],
+    github_stats_summary: AverageGitHubStatsSchema,
 
-    // GitHub Stats
-    github_stats: {
-      exploration_count: { type: Number, default: 0 },
-      total_commits: { type: Number, default: 0 },
-      last_commit_date: { type: Date },
-      progress_percent: { type: Number, min: 0, max: 100 },
-      stars: { type: Number, default: 0 },
-      forks: { type: Number, default: 0 },
-      last_commits: [LastCommitSchema],
+    priority: {
+      type: String,
+      enum: ["Low", "Medium", "High", "Critical"],
+      default: "Medium",
     },
-
+    status: {
+      type: String,
+      enum: ["Planning", "In Progress", "Review", "Completed", "Paused"],
+      default: "Planning",
+    },
     what_i_learned: { type: String },
     would_i_do_it_again: { type: Boolean },
-
-    created_by_user_id: { type: String, required: true },
   },
   { timestamps: true }
 );
