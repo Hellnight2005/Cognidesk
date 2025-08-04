@@ -22,7 +22,7 @@ router.post("/repos", createRepo);
 router.patch("/repos/visibility", changeRepoVisibility);
 
 // // 7. Get analysis of all repos
-router.get("/analysis", getAllRepoAnalysis);
+router.get("/analysis/all", getAllRepoAnalysis);
 
 // // 8. Get analysis of a specific repo
 router.get("/analysis", getSpecificRepoAnalysis);

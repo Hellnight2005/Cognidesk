@@ -1,9 +1,12 @@
 const mongoose = require("mongoose");
+const axios = require("axios");
 const sharedModels = require("../../shared-models");
+const { calculateRepoStats } = require("../utils/repoStats");
 const ActiveProject = mongoose.model(
   "ActiveProject",
   sharedModels.ActiveProjectSchema
 );
+
 const {
   getUserById,
   addActiveProjectToUser,
@@ -220,10 +223,14 @@ async function createRepo(req, res) {
   }
 }
 
+// done
 async function fetchRepos(req, res) {
   const userId = req.body.userId || req.query.userId;
-
   const search = req.query.search?.toLowerCase() || "";
+
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
 
   const user = await getUserById(userId);
 
@@ -235,18 +242,21 @@ async function fetchRepos(req, res) {
   const octokit = new Octokit({ auth: token });
 
   try {
-    // Fetch most recent 100 user repos
+    // Fetch up to 100 user repos, sorted by updated time
     const { data: repos } = await octokit.request("GET /user/repos", {
       per_page: 100,
       sort: "updated",
     });
 
-    // Filter by search
-    const filtered = repos.filter((repo) =>
-      repo.title.toLowerCase().includes(search)
-    );
+    // Filter repos by search term in name or description
+    const filtered = repos.filter((repo) => {
+      return (
+        repo.name.toLowerCase().includes(search) ||
+        (repo.description?.toLowerCase().includes(search) ?? false)
+      );
+    });
 
-    // Get existing project repo IDs
+    // Get list of all repo_ids already in ActiveProject
     const existing = await ActiveProject.find({
       "code_repositories.repo_id": { $in: filtered.map((r) => r.id) },
     });
@@ -257,18 +267,20 @@ async function fetchRepos(req, res) {
       )
     );
 
+    // Format final output for UI
     const result = filtered.map((repo) => ({
       repo_id: repo.id,
-      title: repo.title,
-      full_title: repo.full_title,
-      html_url: repo.html_url,
-      description: repo.description,
+      repo_name: repo.name,
+      full_name: repo.full_name,
+      repo_url: repo.html_url,
+      description: repo.description || "",
+      primary_language: repo.language || "Unknown",
       isAlreadyInDB: existingRepoIds.has(repo.id),
     }));
 
     return res.status(200).json(result);
   } catch (error) {
-    console.error("Error searching repos:", error);
+    console.error("Error fetching repos:", error);
     return res.status(500).json({ error: "GitHub fetch failed" });
   }
 }
@@ -352,7 +364,7 @@ async function changeRepoVisibility(req, res) {
     });
   }
 }
-
+// done
 async function getSpecificRepoAnalysis(req, res) {
   const { userId, githubRepoId } = req.query;
 
@@ -385,27 +397,22 @@ async function getSpecificRepoAnalysis(req, res) {
     }
 
     return res.json({
-      repo_title: repo.title,
-      full_title: repo.full_title,
-      stats: project.github_stats,
-      code_repositories: project.code_repositories.map((r) => ({
-        repo_id: r.repo_id,
-        visibility: r.visibility,
-        default_branch: r.default_branch,
-        created_at: r.created_at,
-        has_issues: r.has_issues,
-        open_issues_count: r.open_issues_count,
-        forks_count: r.forks_count,
-        watchers_count: r.watchers_count,
-        stargazers_count: r.stargazers_count,
-        open_issues: r.open_issues,
-        watchers: r.watchers,
-        deployments_url: r.deployments_url,
-        topics: r.topics,
-      })),
+      // Specific repo info
+      repo_id: repo.repo_id,
+      repo_name: repo.repo_name,
+      repo_url: repo.repo_url,
+      description: repo.description,
+      branches: repo.branches,
+      primary_language: repo.primary_language,
+      languages: repo.languages,
+      stats: repo.github_stats || {},
+
+      // Project-wide info
+      project_title: project.title,
+      project_status: project.status,
       priority: project.priority,
       deadline: project.deadline,
-      tags: project.tags,
+      tags: project.tags || [],
     });
   } catch (error) {
     console.error("Error in getSpecificRepoAnalysis:", error);
@@ -413,6 +420,7 @@ async function getSpecificRepoAnalysis(req, res) {
   }
 }
 
+// done
 async function getAllRepoAnalysis(req, res) {
   const { userId } = req.query;
 
@@ -430,92 +438,66 @@ async function getAllRepoAnalysis(req, res) {
     }
 
     const allRepos = [];
-    const allStats = [];
 
     projects.forEach((project) => {
       project.code_repositories.forEach((repo) => {
         allRepos.push({
-          repo_title: repo.title,
-          full_title: repo.full_title,
+          repo_name: repo.repo_name,
           repo_id: repo.repo_id,
-          stats: project.github_stats || {},
+          project_title: project.title,
           project_status: project.status,
-          goal: project.goal,
           priority: project.priority,
           deadline: project.deadline,
-          tags: project.tags,
+          description: repo.description,
+          primary_language: repo.primary_language,
+          tags: project.tags || [],
+          stats: repo.github_stats || {},
         });
-
-        if (project.github_stats) {
-          allStats.push(project.github_stats);
-        }
       });
     });
 
-    // Compute averages for all numeric github_stats fields
-    const statSums = {};
-    const statCounts = {};
+    // Use the utility function to compute stats
+    const result = calculateRepoStats(allRepos);
 
-    allStats.forEach((stats) => {
-      Object.entries(stats).forEach(([key, value]) => {
-        if (typeof value === "number") {
-          statSums[key] = (statSums[key] || 0) + value;
-          statCounts[key] = (statCounts[key] || 0) + 1;
-        }
-      });
-    });
-
-    const avgStats = {};
-    Object.entries(statSums).forEach(([key, sum]) => {
-      avgStats[key] = +(sum / statCounts[key]).toFixed(2);
-    });
-
-    return res.json({
-      total_repos: allRepos.length,
-      average_stats: avgStats,
-      repositories: allRepos,
-    });
+    return res.json(result);
   } catch (error) {
     console.error("Error in getAllRepoAnalysis:", error);
     return res.status(500).json({ error: "Internal server error." });
   }
 }
 
+// Done
 async function updateRepo(req, res) {
-  const { userId, repoId } = req.body;
-  const { goal, priority, status, new_tags = [] } = req.body;
+  const { userId, repoId, priority, status } = req.body;
 
   if (!userId || !repoId) {
     return res.status(400).json({ error: "userId and repoId are required." });
   }
 
   try {
-    const repo = await ActiveProject.findOne({
+    const project = await ActiveProject.findOne({
       created_by_user_id: userId,
       "code_repositories.repo_id": parseInt(repoId),
     });
 
-    if (!repo) {
-      return res.status(404).json({ error: "Repository not found." });
+    if (!project) {
+      return res
+        .status(404)
+        .json({ error: "Project with that repo not found." });
     }
 
-    // Only update these fields
-    if (goal !== undefined) repo.goal = goal;
-    if (priority !== undefined) repo.priority = priority;
-    if (status !== undefined) repo.status = status;
+    // Update only if values are provided
+    if (priority !== undefined) project.priority = priority;
+    if (status !== undefined) project.status = status;
 
-    // Add new tags (without duplication)
-    if (Array.isArray(new_tags) && new_tags.length > 0) {
-      const currentTags = new Set(repo.tags || []);
-      new_tags.forEach((tag) => currentTags.add(tag));
-      repo.tags = Array.from(currentTags);
-    }
-
-    await repo.save();
+    await project.save();
 
     return res.status(200).json({
-      message: "Repository updated successfully.",
-      updatedRepo: repo,
+      message: "Project priority/status updated successfully.",
+      updated: {
+        priority: project.priority,
+        status: project.status,
+      },
     });
   } catch (error) {
     console.error("Update Repo Error:", error);
@@ -633,12 +615,12 @@ async function syncGithubRepoToDB(req, res) {
   }
 }
 
-// Done
+// When a project is marked as "Completed", the associated idea is automatically converted into a project.
+
 async function retireProject(req, res) {
   const { id } = req.params;
   const { status } = req.body;
 
-  // Updated: Match all enum values from the new schema
   const validStatuses = [
     "Planning",
     "In Progress",
@@ -661,6 +643,23 @@ async function retireProject(req, res) {
 
     if (!updated) {
       return res.status(404).json({ error: "Project not found" });
+    }
+
+    // 🔁 Trigger idea conversion if Completed and origin_idea exists
+    if (status === "Completed" && updated.origin_idea) {
+      const ideaServiceURL =
+        process.env.IDEA_SERVICE_URL || "http://localhost:3002";
+      const convertURL = `${ideaServiceURL}/api/ideas/${updated.origin_idea}/convert`;
+
+      try {
+        await axios.put(convertURL, {
+          convert_to_project: true,
+        });
+        console.log("Triggered idea conversion for:", updated.origin_idea);
+      } catch (conversionErr) {
+        console.warn("Failed to convert idea:", conversionErr.message);
+        // You can choose whether to fail the whole request or not
+      }
     }
 
     return res.json({
