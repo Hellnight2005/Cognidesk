@@ -546,6 +546,39 @@ exports.getIdeasAnalytics = async (req, res) => {
   }
 };
 
+exports.getSingleIdeaAnalytics = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const idea = await Idea.findById(id);
+    if (!idea) {
+      return res.status(404).json({ message: "Idea not found" });
+    }
+
+    const timeSpent = idea.total_time_spent || 0;
+    const avgRating =
+      idea.fun_rating !== null && idea.usefulness_rating !== null
+        ? (idea.fun_rating + idea.usefulness_rating) / 2
+        : null;
+
+    const analytics = {
+      idea_title: idea.idea_title,
+      timeSpent,
+      avgRating,
+      curiosityLevel: idea.curiosity_level,
+      explorationCount: idea.exploration_count,
+      attachmentsCount: idea.attached_files?.length || 0,
+      risksCount: idea.risks_or_challenges?.length || 0,
+      notesCount: idea.notes_on_progress?.length || 0,
+    };
+
+    res.status(200).json({ success: true, analytics });
+  } catch (err) {
+    console.error("Error getting idea analytics:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 // controllers/ideaAnalyticsController.js
 
 exports.getAllIdeasAnalyticsAverages = async (req, res) => {
@@ -595,5 +628,91 @@ exports.getAllIdeasAnalyticsAverages = async (req, res) => {
   } catch (error) {
     console.error("❌ Error fetching average analytics:", error);
     res.status(500).json({ error: "Server error while calculating averages." });
+  }
+};
+
+exports.getAllIdeas = async (req, res) => {
+  try {
+    console.log("📥 Fetching all ideas from database...");
+
+    const ideas = await Idea.find(
+      {},
+      {
+        _id: 1,
+        idea_title: 1,
+        idea_description: 1,
+        category: 1,
+        sub_category: 1,
+        curiosity_level: 1,
+        priority_reason: 1,
+        external_references: 1,
+        importance_level: 1,
+      }
+    ).sort({ createdAt: -1 });
+
+    console.log(`✅ ${ideas.length} ideas fetched successfully.`);
+
+    res.status(200).json(ideas);
+  } catch (error) {
+    console.error("❌ Error fetching all ideas:", error);
+    res.status(500).json({
+      message: "Internal server error while fetching ideas",
+      error: error.message,
+    });
+  }
+};
+
+// controllers/ideaController.js
+
+exports.searchIdeasByTitle = async (req, res) => {
+  const searchQuery = req.query.q;
+
+  // 1. Check for empty or missing query
+  if (!searchQuery || searchQuery.trim() === "") {
+    console.warn("[SearchIdeas] Missing or empty query string.");
+    return res.status(400).json({
+      success: false,
+      message: "Query string 'q' is required.",
+    });
+  }
+
+  try {
+    const regex = new RegExp(searchQuery, "i");
+
+    const ideas = await Idea.find(
+      { idea_title: { $regex: regex } },
+      {
+        _id: 1,
+        idea_title: 1,
+        idea_description: 1,
+        category: 1,
+        sub_category: 1,
+      }
+    )
+      .collation({ locale: "en", strength: 2 })
+      .lean();
+
+    if (!ideas || ideas.length === 0) {
+      console.info(`[SearchIdeas] No ideas found for query: '${searchQuery}'`);
+      return res.status(404).json({
+        success: false,
+        message: "No ideas found.",
+      });
+    }
+
+    console.log(
+      `[SearchIdeas] Found ${ideas.length} idea(s) for query: '${searchQuery}'`
+    );
+    return res.status(200).json({
+      success: true,
+      ideas,
+    });
+  } catch (error) {
+    console.error("[SearchIdeas] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while searching ideas.",
+      error: error.message,
+    });
   }
 };

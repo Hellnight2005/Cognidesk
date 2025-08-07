@@ -3,21 +3,39 @@ const router = express.Router();
 const multer = require("multer");
 const ideaController = require("../controllers/ideaController");
 
-const upload = multer({ storage: multer.memoryStorage() });
-
 const uploadToDrive = require("../middlewares/uploadToDrive");
 
+// In-memory file storage for idea uploads
+const upload = multer({ storage: multer.memoryStorage() });
+
+/**
+ * ROUTES ORDER:
+ * 1. Analytics / Utility First
+ * 2. Non-ID Based Fetch
+ * 3. Create / Search / Filter
+ * 4. ID-based operations at the bottom
+ */
+
+// 🧠 Analytics (Should be before dynamic :id routes)
+router.get("/analytics", ideaController.getIdeasAnalytics);
+router.get("/analytics/averages", ideaController.getAllIdeasAnalyticsAverages); // ✅ FIXED
+router.get("/:id/analytics", ideaController.getSingleIdeaAnalytics);
+
+// // 🔍 Search and Listing
+router.get("/", ideaController.getAllIdeas); // List all ideas
+router.get("/search", ideaController.searchIdeasByTitle); // Filter/search ideas
+
+// ➕ Create
 router.post("/", upload.array("files"), ideaController.createIdea);
 
-router.delete("/:id", ideaController.deleteIdea);
+// 🔁 Update
 router.put("/:id", ideaController.updateIdea);
 router.put("/:id/convert", ideaController.updateConvertToProjectField);
 
-// 🧠 Move these BEFORE "/:id"
-router.get("/analytics", ideaController.getIdeasAnalytics);
-router.get("/:id/analytics", ideaController.getAllIdeasAnalyticsAverages);
+// ❌ Delete
+router.delete("/:id", ideaController.deleteIdea);
 
-// 🚨 Always keep this one last
+// 📄 Single Idea (KEEP LAST to avoid route collisions)
 router.get("/:id", ideaController.getIdeaById);
 
 module.exports = router;
