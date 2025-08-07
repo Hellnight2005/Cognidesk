@@ -10,10 +10,12 @@ const {
   syncGithubRepoToDB,
   retireProject,
   addRepoToProject,
+  getAllProjects,
 } = require("../controllers/activeProject");
 
+router.get("/", getAllProjects);
 // // 2. Get a specific repo by name
-router.get("/repos", fetchRepos); // Assuming fetchAllRepos is defined in activeProjectController
+router.post("/repos", fetchRepos); // Assuming fetchAllRepos is defined in activeProjectController
 
 // // 3. Create a repo
 router.post("/repos", createRepo);

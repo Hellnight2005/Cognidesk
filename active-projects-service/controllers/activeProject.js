@@ -13,6 +13,62 @@ const {
 } = require("../services/user-services");
 const { Octokit } = require("@octokit/rest");
 
+async function getAllProjects(req, res) {
+  try {
+    const projects = await ActiveProject.find({}).lean();
+
+    if (!projects || projects.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No projects found." });
+    }
+
+    const transformedProjects = projects.map((project) => {
+      const {
+        _id,
+        created_by_user_id,
+        origin_idea,
+        title,
+        description,
+        start_date,
+        code_repositories,
+        github_stats_summary,
+        priority,
+        status,
+      } = project;
+
+      const formattedRepos = {};
+      if (Array.isArray(code_repositories)) {
+        code_repositories.forEach((repo) => {
+          if (repo.repo_name && repo.repo_url) {
+            formattedRepos[repo.repo_name] = repo.repo_url;
+          }
+        });
+      }
+
+      return {
+        _id,
+        created_by_user_id,
+        origin_idea,
+        title,
+        description,
+        start_date,
+        code_repositories: formattedRepos,
+        github_stats_summary,
+        priority,
+        status,
+      };
+    });
+
+    res.status(200).json({ success: true, projects: transformedProjects });
+  } catch (error) {
+    console.error("Error fetching projects:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch projects." });
+  }
+}
+
 // done
 async function createRepo(req, res) {
   const {
@@ -856,4 +912,5 @@ module.exports = {
   syncGithubRepoToDB,
   retireProject,
   addRepoToProject,
+  getAllProjects,
 };
