@@ -61,7 +61,6 @@ async function ensureCollection() {
     throw err;
   }
 }
-
 async function saveToQdrant({
   idea_id = null,
   user_id = null,
@@ -81,20 +80,23 @@ async function saveToQdrant({
   };
 
   try {
-    // 🔍 Check if any chunk with same file_name exists
+    // ✅ Only check per chunk_index to avoid skipping
     const existing = await client.scroll(COLLECTION_NAME, {
       filter: {
-        must: [{ key: "file_name", match: { value: file_name } }],
+        must: [
+          { key: "file_name", match: { value: file_name } },
+          { key: "chunk_index", match: { value: metadata.chunk_index } },
+        ],
       },
       limit: 1,
     });
 
     if (existing?.points?.length > 0) {
-      log.warn("🛑 File already indexed, skipping", {
-        idea_id,
-        file_name: file_name,
+      log.warn("Chunk already indexed, skipping", {
+        file_name,
+        chunk_index: metadata.chunk_index,
       });
-      return; // Skip duplicate
+      return;
     }
 
     // 💾 Save new vector
@@ -108,7 +110,11 @@ async function saveToQdrant({
       ],
     });
 
-    log.info("✅ Vector saved", { id, file_name: file_name });
+    log.info("✅ Vector saved", {
+      id,
+      file_name: file_name,
+      chunk_index: metadata.chunk_index,
+    });
   } catch (err) {
     log.error("❌ Failed to upsert vector", { message: err.message });
     throw err;
@@ -131,27 +137,27 @@ async function searchFromQdrant(vector, limit = 300) {
   }
 }
 
-async function deleteVectorsByIdeaId(idea_id) {
-  try {
-    await client.delete(COLLECTION_NAME, {
-      filter: {
-        must: [{ key: "idea_id", match: { value: idea_id } }],
-      },
-    });
+// async function deleteVectorsByIdeaId(idea_id) {
+//   try {
+//     await client.delete(COLLECTION_NAME, {
+//       filter: {
+//         must: [{ key: "idea_id", match: { value: idea_id } }],
+//       },
+//     });
 
-    log.info("🧹 Vectors deleted for idea ID", { idea_id });
-  } catch (err) {
-    log.error("❌ Failed to delete vectors by idea ID", {
-      idea_id,
-      error: err.message,
-    });
-    throw err;
-  }
-}
+//     log.info("🧹 Vectors deleted for idea ID", { idea_id });
+//   } catch (err) {
+//     log.error("❌ Failed to delete vectors by idea ID", {
+//       idea_id,
+//       error: err.message,
+//     });
+//     throw err;
+//   }
+// }
 
 module.exports = {
   ensureCollection,
   saveToQdrant,
   searchFromQdrant,
-  deleteVectorsByIdeaId,
+  // deleteVectorsByIdeaId,
 };

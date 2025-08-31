@@ -163,11 +163,11 @@ exports.deleteIdea = async (req, res) => {
       }
     }
 
-    try {
-      await deleteVectorsByIdeaId(ideaId);
-    } catch (err) {
-      console.warn("❌ Vector DB deletion error:", err.message);
-    }
+    // try {
+    //   await deleteVectorsByIdeaId(ideaId);
+    // } catch (err) {
+    //   console.warn("❌ Vector DB deletion error:", err.message);
+    // }
 
     await Idea.findByIdAndDelete(ideaId);
 
@@ -646,13 +646,26 @@ exports.getAllIdeas = async (req, res) => {
         curiosity_level: 1,
         priority_reason: 1,
         external_references: 1,
+        attached_files: 1,
         importance_level: 1,
+        createdAt: 1,
       }
     ).sort({ createdAt: -1 });
 
-    console.log(`✅ ${ideas.length} ideas fetched successfully.`);
+    // Map over the ideas to add the length of the external_references and attached_files arrays
+    const ideasWithCounts = ideas.map((idea) => ({
+      ...idea.toObject(),
+      external_references_count: idea.external_references
+        ? idea.external_references.length
+        : 0,
+      attached_files_count: idea.attached_files
+        ? idea.attached_files.length
+        : 0,
+    }));
 
-    res.status(200).json(ideas);
+    console.log(`✅ ${ideasWithCounts.length} ideas fetched successfully.`);
+
+    res.status(200).json(ideasWithCounts);
   } catch (error) {
     console.error("❌ Error fetching all ideas:", error);
     res.status(500).json({
