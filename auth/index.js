@@ -14,6 +14,15 @@ const app = express();
 // ===================
 // 🔗 Connect to MongoDB
 // ===================
+const cors = require("cors");
+
+app.use(
+  cors({
+    origin: "http://localhost:5173", // Frontend URL
+    credentials: true, // Allow cookies
+  })
+);
+
 connectDB();
 
 app.use(morgan("dev")); // Log HTTP requests

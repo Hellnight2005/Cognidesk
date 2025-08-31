@@ -10,6 +10,7 @@ const ActiveProject = mongoose.model(
 const {
   getUserById,
   addActiveProjectToUser,
+  removeActiveProjectFromUser,
 } = require("../services/user-services");
 const { Octokit } = require("@octokit/rest");
 
@@ -70,18 +71,14 @@ async function getAllProjects(req, res) {
 }
 
 // done
-async function createRepo(req, res) {
+// --- Controller: create GitHub repository only ---
+async function createGithubRepo(req, res) {
   const {
     title,
-    goal,
     description,
-    deadline,
-    tags = [],
     created_by_user_id,
     collaborators = [],
     is_private = false,
-    origin_idea = null,
-    priority = "Medium",
   } = req.body;
 
   if (!title || !created_by_user_id) {
@@ -109,157 +106,120 @@ async function createRepo(req, res) {
     });
 
     const repo = githubRes.data;
-    const repoName = repo.name;
-    const owner = repo.owner.login;
-    const repoCreatedDate = new Date(repo.created_at);
 
     // 2. Add collaborators
     for (const collab of collaborators) {
       if (collab.username && collab.role) {
         await octokit.repos.addCollaborator({
-          owner,
-          repo: repoName,
+          owner: repo.owner.login,
+          repo: repo.name,
           username: collab.username,
           permission: collab.role === "admin" ? "admin" : collab.role,
         });
       }
     }
 
-    // 3. Fetch topics
-    let topics = [];
-    try {
-      const topicsRes = await octokit.repos.getAllTopics({
-        owner,
-        repo: repoName,
-      });
-      topics = topicsRes.data.names || [];
-    } catch {
-      console.warn("⚠️ Unable to fetch topics.");
-    }
+    return res.status(201).json({
+      message: "GitHub repo created successfully",
+      repo,
+    });
+  } catch (err) {
+    console.error("❌ GitHub Repo Error:", err.message);
+    return res.status(500).json({
+      message: "Failed to create GitHub repo",
+      error: err.message,
+    });
+  }
+}
 
-    // 4. Fetch languages
-    let allLanguages = {};
-    let mostUsedLanguage = "Unknown";
-    try {
-      const langRes = await octokit.repos.listLanguages({
-        owner,
-        repo: repoName,
-      });
-      allLanguages = langRes.data || {};
-      const sorted = Object.entries(allLanguages).sort((a, b) => b[1] - a[1]);
-      if (sorted.length > 0) mostUsedLanguage = sorted[0][0];
-    } catch {
-      console.warn("⚠️ No languages found.");
-    }
+// --- Controller: create DB project entry only ---
+async function createProjectEntry(req, res) {
+  const {
+    created_by_user_id,
+    origin_idea,
+    title,
+    description,
+    deadline,
+    priority = "Medium",
+    repoData = null, // 👈 default to null if not provided
+  } = req.body;
 
-    // 5. Fetch last 2 commits
-    let last_commits = [];
-    try {
-      const commitsRes = await octokit.repos.listCommits({
-        owner,
-        repo: repoName,
-        per_page: 2,
-      });
+  if (!title || !created_by_user_id) {
+    return res.status(400).json({ message: "title and user ID are required" });
+  }
 
-      const rawCommits = commitsRes.data || [];
-
-      last_commits = rawCommits
-        .filter((commit) => commit?.commit)
-        .map((commit) => {
-          const commitData = commit.commit;
-          const authorInfo = commitData.author || {};
-          const githubAuthor = commit.author || {};
-
-          return {
-            commit_message: commitData.message || "No commit message",
-            commit_url: commit.html_url || null,
-            author_name: authorInfo.name || githubAuthor.login || "Unknown",
-            author_username: githubAuthor.login || null,
-            committed_at: authorInfo.date
-              ? new Date(authorInfo.date)
-              : new Date(),
-          };
-        });
-    } catch (err) {
-      console.warn(
-        `⚠️ No commits found or error occurred for repo: ${repoName}`,
-        err.message
-      );
-    }
-
-    // Fallback commits if empty
-    if (last_commits.length < 2) {
-      const fallbackCommit = {
-        commit_message: "Initial commit",
-        commit_url: repo.html_url,
-        author_name: user.name || "Unknown",
-        author_username: user.username || "unknown",
-        committed_at: new Date(),
-      };
-      while (last_commits.length < 2) {
-        last_commits.push(fallbackCommit);
-      }
-    }
-
-    // 6. Get branches
-    let branches = [];
-    try {
-      const branchRes = await octokit.repos.listBranches({
-        owner,
-        repo: repoName,
-      });
-      branches = branchRes.data.map((b) => b.name);
-    } catch {
-      branches = ["main"];
-    }
-
-    // 7. Create project
-    const resolvedDeadline = deadline
-      ? new Date(deadline)
-      : new Date(repoCreatedDate.getTime() + 90 * 24 * 60 * 60 * 1000);
-
-    const project = await ActiveProject.create({
+  try {
+    let projectData = {
       created_by_user_id,
       origin_idea,
       title,
-      description: repoDescription,
-      start_date: repoCreatedDate,
-      deadline: resolvedDeadline,
+      description,
+      start_date: new Date(),
+      deadline: deadline
+        ? new Date(deadline)
+        : new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
       status: "Planning",
       priority,
-      code_repositories: [
-        {
-          repo_id: repo.id,
-          repo_name: repoName,
-          repo_url: repo.html_url,
-          description: repoDescription,
-          primary_language: mostUsedLanguage,
-          languages: allLanguages,
-          branches,
-          github_stats: {
-            stars: repo.stargazers_count || 0,
-            forks: repo.forks_count || 0,
-            watchers: repo.watchers_count || 0,
-            open_issues: repo.open_issues_count || 0,
-            total_commits: last_commits.length,
-            last_commit_date: last_commits[0]?.committed_at || null,
-            last_commits,
-            exploration_count: 0,
-            progress_percent: 0,
+      code_repositories: [],
+      github_stats_summary: {},
+    };
+
+    if (repoData) {
+      const {
+        repo,
+        repoName,
+        repoCreatedDate,
+        mostUsedLanguage,
+        allLanguages,
+        branches,
+        last_commits,
+      } = repoData;
+
+      const resolvedDeadline = deadline
+        ? new Date(deadline)
+        : new Date(repoCreatedDate.getTime() + 90 * 24 * 60 * 60 * 1000);
+
+      projectData = {
+        ...projectData,
+        description: description || repo.description,
+        start_date: repoCreatedDate,
+        deadline: resolvedDeadline,
+        code_repositories: [
+          {
+            repo_id: repo.id,
+            repo_name: repoName,
+            repo_url: repo.html_url,
+            description: description || repo.description,
+            primary_language: mostUsedLanguage,
+            languages: allLanguages,
+            branches,
+            github_stats: {
+              stars: repo.stargazers_count || 0,
+              forks: repo.forks_count || 0,
+              watchers: repo.watchers_count || 0,
+              open_issues: repo.open_issues_count || 0,
+              total_commits: last_commits.length,
+              last_commit_date: last_commits[0]?.committed_at || null,
+              last_commits,
+              exploration_count: 0,
+              progress_percent: 0,
+            },
           },
+        ],
+        github_stats_summary: {
+          total_repos: 1,
+          average_commits: last_commits.length,
+          average_stars: repo.stargazers_count || 0,
+          average_forks: repo.forks_count || 0,
+          average_watchers: repo.watchers_count || 0,
+          average_issues: repo.open_issues_count || 0,
+          most_used_language: mostUsedLanguage,
+          all_languages: allLanguages,
         },
-      ],
-      github_stats_summary: {
-        total_repos: 1,
-        average_commits: last_commits.length,
-        average_stars: repo.stargazers_count || 0,
-        average_forks: repo.forks_count || 0,
-        average_watchers: repo.watchers_count || 0,
-        average_issues: repo.open_issues_count || 0,
-        most_used_language: mostUsedLanguage,
-        all_languages: allLanguages,
-      },
-    });
+      };
+    }
+
+    const project = await ActiveProject.create(projectData);
 
     await addActiveProjectToUser({
       userId: created_by_user_id,
@@ -267,21 +227,47 @@ async function createRepo(req, res) {
     });
 
     return res.status(201).json({
-      message: "Repo and project created successfully",
+      message: "Project entry created successfully",
       project,
     });
   } catch (err) {
-    console.error("❌ Error:", err.message);
+    console.error("❌ Project DB Error:", err.message);
     return res.status(500).json({
-      message: "Failed to create GitHub repo or save project",
+      message: "Failed to create project entry",
       error: err.message,
     });
   }
 }
 
+// get the project buy ID
+async function getProjectById(req, res) {
+  const { id } = req.params;
+
+  try {
+    const project = await ActiveProject.findById(id).lean();
+
+    if (!project) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Project not found." });
+    }
+
+    // Optional: remove Mongoose internal fields like __v
+    const { __v, ...projectData } = project;
+
+    res.status(200).json({ success: true, project: projectData });
+  } catch (error) {
+    console.error("Error fetching project by ID:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch project." });
+  }
+}
+
 // done
 async function fetchRepos(req, res) {
-  const userId = req.body.userId || req.query.userId;
+  // Only read from query params
+  const userId = req.query.userId;
   const search = req.query.search?.toLowerCase() || "";
 
   if (!userId) {
@@ -305,12 +291,11 @@ async function fetchRepos(req, res) {
     });
 
     // Filter repos by search term in name or description
-    const filtered = repos.filter((repo) => {
-      return (
+    const filtered = repos.filter(
+      (repo) =>
         repo.name.toLowerCase().includes(search) ||
         (repo.description?.toLowerCase().includes(search) ?? false)
-      );
-    });
+    );
 
     // Get list of all repo_ids already in ActiveProject
     const existing = await ActiveProject.find({
@@ -493,29 +478,60 @@ async function getAllRepoAnalysis(req, res) {
         .json({ error: "No projects found for this user." });
     }
 
+    // Collect all repos
     const allRepos = [];
-
     projects.forEach((project) => {
       project.code_repositories.forEach((repo) => {
+        const stats = repo.github_stats || {};
         allRepos.push({
-          repo_name: repo.repo_name,
-          repo_id: repo.repo_id,
-          project_title: project.title,
-          project_status: project.status,
-          priority: project.priority,
-          deadline: project.deadline,
-          description: repo.description,
-          primary_language: repo.primary_language,
-          tags: project.tags || [],
-          stats: repo.github_stats || {},
+          total_commits: stats.total_commits || 0,
+          stars: stats.stars || 0,
+          forks: stats.forks || 0,
+          watchers: stats.watchers || 0,
+          open_issues: stats.open_issues || 0,
         });
       });
     });
 
-    // Use the utility function to compute stats
-    const result = calculateRepoStats(allRepos);
+    const total_repositories = allRepos.length;
 
-    return res.json(result);
+    // Sum all stats
+    const total_stats = allRepos.reduce(
+      (acc, repo) => {
+        acc.total_commits += repo.total_commits;
+        acc.stars += repo.stars;
+        acc.forks += repo.forks;
+        acc.watchers += repo.watchers;
+        acc.open_issues += repo.open_issues;
+        return acc;
+      },
+      { total_commits: 0, stars: 0, forks: 0, watchers: 0, open_issues: 0 }
+    );
+
+    // Compute averages (rounded to 2 decimals)
+    const average_stats = {
+      total_commits: total_repositories
+        ? Number((total_stats.total_commits / total_repositories).toFixed(2))
+        : 0,
+      stars: total_repositories
+        ? Number((total_stats.stars / total_repositories).toFixed(2))
+        : 0,
+      forks: total_repositories
+        ? Number((total_stats.forks / total_repositories).toFixed(2))
+        : 0,
+      watchers: total_repositories
+        ? Number((total_stats.watchers / total_repositories).toFixed(2))
+        : 0,
+      open_issues: total_repositories
+        ? Number((total_stats.open_issues / total_repositories).toFixed(2))
+        : 0,
+    };
+
+    return res.json({
+      total_repositories,
+      total_stats,
+      average_stats,
+    });
   } catch (error) {
     console.error("Error in getAllRepoAnalysis:", error);
     return res.status(500).json({ error: "Internal server error." });
@@ -523,40 +539,56 @@ async function getAllRepoAnalysis(req, res) {
 }
 
 // Done
-async function updateRepo(req, res) {
-  const { userId, repoId, priority, status } = req.body;
+async function updateProject(req, res) {
+  const { userId, projectId, priority, status, deadline, description } =
+    req.body;
 
-  if (!userId || !repoId) {
-    return res.status(400).json({ error: "userId and repoId are required." });
+  if (!userId || !projectId) {
+    return res
+      .status(400)
+      .json({ error: "userId and projectId are required." });
   }
 
   try {
     const project = await ActiveProject.findOne({
+      _id: projectId,
       created_by_user_id: userId,
-      "code_repositories.repo_id": parseInt(repoId),
     });
 
     if (!project) {
       return res
         .status(404)
-        .json({ error: "Project with that repo not found." });
+        .json({ error: "Project not found or not owned by the user." });
     }
 
-    // Update only if values are provided
-    if (priority !== undefined) project.priority = priority;
-    if (status !== undefined) project.status = status;
+    // Update fields only if they are provided in the request body
+    if (priority !== undefined) {
+      project.priority = priority;
+    }
+    if (status !== undefined) {
+      project.status = status;
+    }
+    if (deadline !== undefined) {
+      project.deadline = deadline;
+    }
+    if (description !== undefined) {
+      project.description = description;
+    }
 
+    // Save the updated project document
     await project.save();
 
     return res.status(200).json({
-      message: "Project priority/status updated successfully.",
+      message: "Project updated successfully.",
       updated: {
         priority: project.priority,
         status: project.status,
+        deadline: project.deadline,
+        description: project.description,
       },
     });
   } catch (error) {
-    console.error("Update Repo Error:", error);
+    console.error("Update Project Error:", error);
     return res.status(500).json({ error: "Server error." });
   }
 }
@@ -728,6 +760,41 @@ async function retireProject(req, res) {
   }
 }
 
+// delete the project
+const deleteProject = async (req, res) => {
+  const { userId, projectId } = req.body;
+
+  // 1. Validate that userId and projectId are provided
+  if (!userId || !projectId) {
+    return res
+      .status(400)
+      .json({ error: "userId and projectId are required." });
+  }
+
+  try {
+    // 2. Remove the project from the user's active projects list
+    await removeActiveProjectFromUser({ userId, projectId });
+
+    // 3. Delete the project document from the ActiveProject collection
+    const projectDeleteResult = await ActiveProject.deleteOne({
+      _id: projectId,
+      created_by_user_id: userId,
+    });
+
+    // 4. Check if a project was actually deleted
+    if (projectDeleteResult.deletedCount === 0) {
+      return res.status(404).json({
+        error: "Project not found or not owned by the user.",
+      });
+    }
+
+    // 5. Send a success response
+    return res.status(200).json({ message: "Project deleted successfully." });
+  } catch (error) {
+    console.error("Delete Project Error:", error);
+    return res.status(500).json({ error: "Server error." });
+  }
+};
 // Done
 const addRepoToProject = async (req, res) => {
   try {
@@ -903,14 +970,17 @@ const addRepoToProject = async (req, res) => {
 };
 
 module.exports = {
-  createRepo,
+  createGithubRepo,
+  createProjectEntry,
   fetchRepos,
   changeRepoVisibility,
   getSpecificRepoAnalysis,
   getAllRepoAnalysis,
-  updateRepo,
+  updateProject,
   syncGithubRepoToDB,
+  getProjectById,
   retireProject,
   addRepoToProject,
   getAllProjects,
+  deleteProject,
 };

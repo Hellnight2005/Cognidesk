@@ -1,41 +1,58 @@
 const express = require("express");
 const router = express.Router();
 const {
-  createRepo,
+  createGithubRepo,
+  createProjectEntry,
   fetchRepos,
   changeRepoVisibility,
   getSpecificRepoAnalysis,
   getAllRepoAnalysis,
-  updateRepo,
+  updateProject,
   syncGithubRepoToDB,
   retireProject,
   addRepoToProject,
   getAllProjects,
+  getProjectById,
+  deleteProject,
 } = require("../controllers/activeProject");
 
-router.get("/", getAllProjects);
-// // 2. Get a specific repo by name
-router.post("/repos", fetchRepos); // Assuming fetchAllRepos is defined in activeProjectController
+// Fetch a list of user's GitHub repos that can be imported.
+router.get("/repos", fetchRepos);
 
-// // 3. Create a repo
-router.post("/repos", createRepo);
+// Create a new project and GitHub repo.
+router.post("/repos", createGithubRepo);
 
-// // 6. Change repo visibility (public/private)
+// Change the visibility (public/private) of a linked GitHub repo.
 router.patch("/repos/visibility", changeRepoVisibility);
 
-// // 7. Get analysis of all repos
-router.get("/analysis/all", getAllRepoAnalysis);
+// Sync GitHub repo data (commits, languages, etc.) to the database.
+router.post("/repos/sync", syncGithubRepoToDB);
 
-// // 8. Get analysis of a specific repo
+// Get analysis of a specific repo.
 router.get("/analysis", getSpecificRepoAnalysis);
 
-router.post("/sync-github-repo", syncGithubRepoToDB);
+// Get analysis of all repos.
+router.get("/analysis/all", getAllRepoAnalysis);
 
-// // 4. Update a repo by ID or name
-router.post("/update-repo", updateRepo); // identifier = ID or name
+// Get all projects.
+router.get("/", getAllProjects);
 
-router.post("/repo/:id", retireProject);
+// Create a new project entry in the database.
+router.post("/", createProjectEntry);
 
-router.put("/repo/:id", addRepoToProject); // Assuming retireProject is defined in activeProjectController
+// Get a specific project by ID.
+router.get("/:id", getProjectById);
+
+// Add an existing GitHub repo to a project.
+router.put("/:id/repos", addRepoToProject);
+
+// Update a project's priority or status.
+router.put("/repo/updated", updateProject);
+
+// Retire a project (e.g., set status to "Completed").
+router.patch("/:id/retire", retireProject);
+
+// the route to delet the project
+router.delete("/repo", deleteProject);
 
 module.exports = router;

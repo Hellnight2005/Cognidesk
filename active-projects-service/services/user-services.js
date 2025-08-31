@@ -29,7 +29,27 @@ async function addActiveProjectToUser({ userId, projectId }) {
   );
 }
 
+// Function to remove a project from the user's profile
+async function removeActiveProjectFromUser({ userId, projectId }) {
+  if (!userId || !projectId) {
+    throw new Error("Missing userId or projectId");
+  }
+
+  await User.updateOne(
+    { _id: userId },
+    {
+      $pull: {
+        "knowledge.active_projects": projectId,
+      },
+      $set: {
+        "meta.updatedAt": new Date(),
+      },
+    }
+  );
+}
+
 module.exports = {
   getUserById,
   addActiveProjectToUser,
+  removeActiveProjectFromUser,
 };

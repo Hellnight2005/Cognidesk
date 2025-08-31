@@ -68,12 +68,12 @@ router.get("/success", (req, res) => {
   // 🧁 Set cookies using cookie-parser
   res.cookie(
     "profile",
-    {
+    JSON.stringify({
       id: sessionUser.id,
       username: sessionUser.username,
       display_name: sessionUser.display_name,
       photo: sessionUser.profile_photo_url,
-    },
+    }),
     {
       httpOnly: false,
       maxAge: 24 * 60 * 60 * 1000,
@@ -81,26 +81,24 @@ router.get("/success", (req, res) => {
     }
   );
 
-  res.cookie("google", sessionUser.provider.google || {}, {
+  res.cookie("google", JSON.stringify(sessionUser.provider.google || {}), {
     httpOnly: false,
     maxAge: 24 * 60 * 60 * 1000,
     sameSite: "Lax",
   });
 
-  res.cookie("github", sessionUser.provider.github || {}, {
+  res.cookie("github", JSON.stringify(sessionUser.provider.github || {}), {
     httpOnly: false,
     maxAge: 24 * 60 * 60 * 1000,
     sameSite: "Lax",
   });
 
-  res.json({
-    message: "Login successful",
-    user: sessionUser,
-  });
+  // ✅ Redirect to frontend after setting cookies
+  res.redirect("http://localhost:5173");
 });
 
 router.get("/failure", (req, res) => {
-  res.status(401).json({ message: "Login failed" });
+  res.redirect("http://localhost:5173");
 });
 
 router.get("/logout", (req, res, next) => {
