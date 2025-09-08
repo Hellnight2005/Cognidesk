@@ -3,14 +3,6 @@ const path = require("path");
 const streamifier = require("streamifier");
 const axios = require("axios");
 
-/**
- * Uploads multiple files to Google Drive in the specified folder.
- * @param {Array} files - Multer files [{ buffer, originalname, mimetype }]
- * @param {String} accessToken - Access token (will try refreshing if possible)
- * @param {String} category - One of ["Video", "Document", "Image", "Other"]
- * @param {String} parentFolderId - Google Drive folder ID for the idea
- * @param {String} userId - Used to refresh token if needed
- */
 exports.googleUploadFiles = async (
   files,
   accessToken,
@@ -20,6 +12,7 @@ exports.googleUploadFiles = async (
 ) => {
   const uploaded = [];
   const failed = [];
+  const skipped = [];
 
   try {
     // 🌐 Step 1: Refresh token
@@ -50,6 +43,32 @@ exports.googleUploadFiles = async (
     // 📁 Step 3: Upload files
     for (const file of files) {
       try {
+        // 🔎 Step 3.1: Check if file already exists in folder
+        const query = `name='${file.originalname.replace(
+          /'/g,
+          "\\'"
+        )}' and '${parentFolderId}' in parents and trashed=false`;
+        const existing = await drive.files.list({
+          q: query,
+          fields: "files(id, name)",
+        });
+
+        if (existing.data.files.length > 0) {
+          console.log(
+            `⏭️ Skipped upload: '${file.originalname}' already exists`
+          );
+          skipped.push({
+            file_name: file.originalname,
+            file_category: category,
+            file_type: path.extname(file.originalname).slice(1),
+            drive_folder_link: `https://drive.google.com/drive/folders/${parentFolderId}`,
+            drive_file_link: `https://drive.google.com/file/d/${existing.data.files[0].id}/view`,
+            uploaded_at: new Date(),
+          });
+          continue; // move to next file
+        }
+
+        // 🚀 Step 3.2: Upload new file
         const metadata = {
           name: file.originalname,
           parents: [parentFolderId],
@@ -72,7 +91,7 @@ exports.googleUploadFiles = async (
           file_type: path.extname(file.originalname).slice(1),
           drive_folder_link: `https://drive.google.com/drive/folders/${parentFolderId}`,
           drive_file_link: `https://drive.google.com/file/d/${fileId}/view`,
-          video_duration_minutes: category === "Video" ? null : null, // Replace if duration is calculated
+          video_duration_minutes: category === "Video" ? null : null,
           uploaded_at: new Date(),
         });
       } catch (uploadErr) {
@@ -89,8 +108,9 @@ exports.googleUploadFiles = async (
 
     return {
       success: uploaded,
+      skipped,
       failed,
-      message: `✅ Upload completed: ${uploaded.length} success, ${failed.length} failed.`,
+      message: `✅ Upload finished: ${uploaded.length} uploaded, ${skipped.length} skipped, ${failed.length} failed.`,
     };
   } catch (err) {
     console.error("❌ Fatal upload error:", err.message);

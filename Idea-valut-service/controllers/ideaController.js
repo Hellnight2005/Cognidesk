@@ -585,41 +585,37 @@ exports.getAllIdeasAnalyticsAverages = async (req, res) => {
   try {
     const results = await Idea.aggregate([
       {
-        $project: {
-          timeSpent: { $ifNull: ["$total_time_spent", 0] },
-          explorationCount: { $ifNull: ["$exploration_count", 0] },
-          attachmentsCount: { $size: { $ifNull: ["$attached_files", []] } },
-          risksCount: { $size: { $ifNull: ["$risks_or_challenges", []] } },
-          notesCount: { $size: { $ifNull: ["$notes_on_progress", []] } },
-          funRating: { $ifNull: ["$fun_rating", null] },
-          usefulnessRating: { $ifNull: ["$usefulness_rating", null] },
-          averageRating: {
-            $cond: {
-              if: {
-                $and: [
-                  { $ne: ["$fun_rating", null] },
-                  { $ne: ["$usefulness_rating", null] },
-                ],
-              },
-              then: {
-                $divide: [{ $add: ["$fun_rating", "$usefulness_rating"] }, 2],
-              },
-              else: null,
-            },
-          },
-        },
-      },
-      {
         $group: {
           _id: null,
-          avgTimeSpent: { $avg: "$timeSpent" },
-          avgExplorationCount: { $avg: "$explorationCount" },
-          avgAttachmentsCount: { $avg: "$attachmentsCount" },
-          avgRisksCount: { $avg: "$risksCount" },
-          avgNotesCount: { $avg: "$notesCount" },
-          avgFunRating: { $avg: "$funRating" },
-          avgUsefulnessRating: { $avg: "$usefulnessRating" },
-          avgAverageRating: { $avg: "$averageRating" },
+          // avgTimeSpent: { $avg: { $ifNull: ["$total_time_spent", 0] } },
+          // avgExplorationCount: { $avg: { $ifNull: ["$exploration_count", 0] } },
+          avgAttachmentsCount: {
+            $avg: { $size: { $ifNull: ["$attached_files", []] } },
+          },
+          // avgRisksCount: {
+          //   $avg: { $size: { $ifNull: ["$risks_or_challenges", []] } },
+          // },
+          // avgNotesCount: {
+          //   $avg: { $size: { $ifNull: ["$notes_on_progress", []] } },
+          // },
+          avgFunRating: { $avg: "$fun_rating" },
+          avgUsefulnessRating: { $avg: "$usefulness_rating" },
+          avgAverageRating: {
+            $avg: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $ne: ["$fun_rating", null] },
+                    { $ne: ["$usefulness_rating", null] },
+                  ],
+                },
+                then: {
+                  $divide: [{ $add: ["$fun_rating", "$usefulness_rating"] }, 2],
+                },
+                else: null,
+              },
+            },
+          },
         },
       },
     ]);
