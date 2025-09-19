@@ -23,6 +23,7 @@ if (!fs.existsSync(EMBEDDING_DIR))
 if (!fs.existsSync(CONVERTED_DIR))
   fs.mkdirSync(CONVERTED_DIR, { recursive: true });
 
+// 🔧 Unified filename normalization
 function normalizeFileName(fileName) {
   return path
     .basename(fileName, path.extname(fileName))
@@ -36,13 +37,12 @@ function normalizeFileName(fileName) {
 const processFile = async (file, idea_id, user_id, retry = 0) => {
   try {
     let text = "";
-    let filePath = "";
+    let filePath = path.resolve(file.path);
 
     if (file.website_url) {
       console.log(`🌐 Scraping website: ${file.website_url}`);
       text = await scrapeWebsite(file.website_url);
     } else {
-      filePath = path.resolve(file.path);
       if (!fs.existsSync(filePath)) {
         const fallbackPath = path.resolve(CONVERTED_DIR, file.file_name);
         if (fs.existsSync(fallbackPath)) {
@@ -55,17 +55,24 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
       }
 
       const ext = path.extname(filePath).toLowerCase();
-      if (ext === ".pdf") text = await extractTextWithPdfParse(filePath);
-      else if ([".docx", ".md", ".txt"].includes(ext))
+
+      if (ext === ".pdf") {
+        text = await extractTextWithPdfParse(filePath);
+      } else if ([".docx", ".md", ".txt"].includes(ext)) {
         text = await extractTextFromPath(filePath);
-      else throw new Error("Unsupported file type");
+      } else {
+        throw new Error("Unsupported file type");
+      }
     }
 
     if (!text) throw new Error("No text extracted");
 
+    // 🔧 Always save extracted text with normalized name
     const normalizedBase = normalizeFileName(file.file_name);
     const txtFileName = `${normalizedBase}.txt`;
     const txtFilePath = path.join(CONVERTED_DIR, txtFileName);
+
+    fs.writeFileSync(txtFilePath, text, "utf-8");
 
     if (!fs.existsSync(txtFilePath)) {
       console.warn(`❌ File not found in converted dir: ${txtFileName}`);
@@ -80,24 +87,19 @@ const processFile = async (file, idea_id, user_id, retry = 0) => {
       { $set: { "attached_files.$.embedding_status": "completed" } }
     );
 
+    // 🔧 Cleanup temporary files
     if (file.path && fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
       console.log(`🗑️ Deleted uploaded file: ${file.path}`);
-
-      const convertedPath = path.join(
-        CONVERTED_DIR,
-        normalizeFileName(file.file_name) + ".txt"
-      );
-      if (fs.existsSync(convertedPath)) {
-        fs.unlinkSync(convertedPath);
-        console.log(`🗑️ Deleted converted file: ${convertedPath}`);
-      }
-
-      const embeddedPath = path.join(EMBEDDING_DIR, file.file_name);
-      if (fs.existsSync(embeddedPath)) {
-        fs.unlinkSync(embeddedPath);
-        console.log(`🗑️ Deleted embedded file: ${embeddedPath}`);
-      }
+    }
+    if (fs.existsSync(txtFilePath)) {
+      fs.unlinkSync(txtFilePath);
+      console.log(`🗑️ Deleted converted file: ${txtFilePath}`);
+    }
+    const embeddedPath = path.join(EMBEDDING_DIR, file.file_name);
+    if (fs.existsSync(embeddedPath)) {
+      fs.unlinkSync(embeddedPath);
+      console.log(`🗑️ Deleted embedded file: ${embeddedPath}`);
     }
   } catch (err) {
     console.error(`❌ Error processing ${file.originalname}:`, err.message);
@@ -154,10 +156,15 @@ const processExternalReferences = async (
       const normalizedFileName = normalizeFileName(item.originalname) + ".txt";
       const fakePath = path.join(CONVERTED_DIR, normalizedFileName);
 
-      fs.writeFileSync(fakePath, item.text);
+      fs.writeFileSync(fakePath, item.text, "utf-8");
       await embedTextFileAndSave(fakePath, user_id, idea_id);
 
       console.log(`✅ Embedded external: ${item.originalname}`);
+
+      if (fs.existsSync(fakePath)) {
+        fs.unlinkSync(fakePath);
+        console.log(`🗑️ Deleted temp external file: ${fakePath}`);
+      }
     } catch (err) {
       console.error(
         `❌ Embedding failed for external ref: ${item.originalname}`,

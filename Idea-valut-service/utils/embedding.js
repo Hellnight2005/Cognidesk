@@ -11,6 +11,7 @@ if (!fs.existsSync(EMBEDDING_DIR)) {
   fs.mkdirSync(EMBEDDING_DIR, { recursive: true });
 }
 
+// 🧹 Clean text for better embeddings
 function cleanText(rawText) {
   return rawText
     .replace(/-\n/g, "")
@@ -21,6 +22,7 @@ function cleanText(rawText) {
     .trim();
 }
 
+// ✂️ Chunk text into ~300 tokens
 function chunkText(text, maxTokens = 300) {
   const sentences = text.split(/(?<=[.?!])\s+/);
   const chunks = [];
@@ -38,6 +40,7 @@ function chunkText(text, maxTokens = 300) {
   return chunks;
 }
 
+// 🧾 Extract optional metadata
 function extractMetadata(text) {
   const arxivMatch = text.match(/arXiv:(\d{4}\.\d{5})/i);
   const yearMatch = text.match(/\b(19|20)\d{2}\b/g);
@@ -53,6 +56,7 @@ function extractMetadata(text) {
   };
 }
 
+// ⚡ Generate embeddings with retries
 async function generateEmbedding(text, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -61,7 +65,11 @@ async function generateEmbedding(text, retries = 3) {
         prompt: text,
       });
 
-      const vector = res.data.embedding;
+      // 🛠 FIX: Ollama sometimes returns { embeddings: [[]] } not { embedding: [] }
+      const vector =
+        res.data.embedding ||
+        (Array.isArray(res.data.embeddings) ? res.data.embeddings[0] : null);
+
       if (!Array.isArray(vector) || vector.length !== 768) {
         throw new Error(`Invalid vector size: ${vector?.length}`);
       }
@@ -80,6 +88,7 @@ async function generateEmbedding(text, retries = 3) {
   }
 }
 
+// 🚀 Main embed pipeline
 async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
   const fileName = path.basename(fullFilePath);
   console.log(`\n🚀 Starting embedding for: ${fileName}`);
@@ -128,8 +137,8 @@ async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
         },
       });
       successCount++;
-    } catch (_) {
-      // Silent fail for individual chunk
+    } catch (err) {
+      console.error(`❌ Failed to save chunk ${i}:`, err.message);
     }
   }
 
@@ -139,16 +148,21 @@ async function embedTextFileAndSave(fullFilePath, user_id, idea_id) {
       { optimizer_config: { indexing_threshold: 1 } },
       { headers: { "Content-Type": "application/json" } }
     );
-  } catch (_) {
-    // Silent fail for optimizer config
+  } catch (err) {
+    console.warn("⚠️ Optimizer config failed:", err.message);
   }
 
   console.log(
     `✅ Embedded and saved ${successCount}/${chunks.length} chunks for: ${fileName}`
   );
 
-  fs.unlinkSync(fullFilePath);
-  console.log(`🗑️ Removed source file: ${fileName}\n`);
+  // 🗑 Cleanup file after embedding
+  try {
+    fs.unlinkSync(fullFilePath);
+    console.log(`🗑️ Removed source file: ${fileName}\n`);
+  } catch (err) {
+    console.warn(`⚠️ Could not delete file: ${fileName}`, err.message);
+  }
 }
 
 module.exports = embedTextFileAndSave;
